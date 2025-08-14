@@ -1,0 +1,96 @@
+# Paths for folders and metadata files
+paths:
+  contactPolarized: "/home/martina/Documents/SkinLesions/Dataset/contactPolarized"
+  contactNonPolarized: "/home/martina/Documents/SkinLesions/Dataset/contactNonPolarized"
+  nonContactPolarized: "/home/martina/Documents/SkinLesions/Dataset/nonContactPolarized"
+
+  contactPolarizedMetadata: "/home/martina/Documents/SkinLesions/Dataset/contactPolarized/metadata.csv"
+  contactNonPolarizedMetadata: "/home/martina/Documents/SkinLesions/Dataset/contactNonPolarized/metadata.csv"
+  nonContactPolarizedMetadata: "/home/martina/Documents/SkinLesions/Dataset/nonContactPolarized/metadata.csv"
+
+################################################################################
+
+# General parameters
+n_classes: 6
+batch_size: 32
+device: "cuda"
+seed: 42
+
+################################################################################
+
+# Partitioner parameters
+# contactPolarized:
+#   train:
+#     num_partitions: 51
+#     alpha: 30
+#   val:
+#     num_partitions: 51
+#     alpha: 30
+  
+# contactNonPolarized:
+#   train:
+#     num_partitions: 23
+#     alpha: 20
+#     shift: 51
+#   val:
+#     num_partitions: 23
+#     alpha: 30
+#     shift: 51
+
+# nonContactPolarized:
+#   train:
+#     num_partitions: 6
+#     alpha: 20
+#     shift: 74
+#   val:
+#     num_partitions: 6
+#     alpha: 30
+#     shift: 74
+
+# train:
+#   min_part_size: 80
+# val:
+#   min_part_size: 15
+
+contactPolarized:
+  train:
+    num_partitions: 51
+    alpha: 25
+  val:
+    num_partitions: 51
+    alpha: 25
+  
+contactNonPolarized:
+  train:
+    num_partitions: 23
+    alpha: 25
+    shift: 51
+  val:
+    num_partitions: 23
+    alpha: 25
+    shift: 51
+
+nonContactPolarized:
+  train:
+    num_partitions: 6
+    alpha: 25
+    shift: 74
+  val:
+    num_partitions: 6
+    alpha: 25
+    shift: 74
+
+train:
+  min_part_size: 80
+val:
+  min_part_size: 15
+
+################################################################################
+
+# Federated options
+num_clients: 80
+num_rounds: 50
+
+plot_label_distributions: False
+
+
