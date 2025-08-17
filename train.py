@@ -135,7 +135,7 @@ def main():
     print("CUDA device count:", torch.cuda.device_count())
     print("CUDA current device:", torch.cuda.current_device())
     print("CUDA device name:", torch.cuda.get_device_name(0))
-    model = EfficientNetModel(num_classes=6, fine_tune_layers=True, premodel="server-v9-sint")
+    model = EfficientNetModel(num_classes=6, fine_tune_layers=True, premodel="pre-sint")
     # Load pre-trained weights
     pre_trained_weights = [layer.cpu().numpy() for layer in model.state_dict().values()]
     #print(list(model.state_dict().keys()))
@@ -145,7 +145,7 @@ def main():
         if split_index > 0:
             break
 
-        if "classifier" in name:
+        if "features.2" in name:
             split_index = i
     
     print(split_index)
@@ -154,7 +154,7 @@ def main():
     loss_fn = torch.nn.CrossEntropyLoss()
     #raise Exception("Stopped")
 
-    logdir = "output/ClusterAvg/endC-pre"
+    logdir = "output/ClusterAvg/start2-nopre"
     os.makedirs(logdir, exist_ok=True)
     server_writer = SummaryWriter(log_dir=logdir)
 
@@ -164,7 +164,7 @@ def main():
         criterion=loss_fn,
         optimizer=torch.optim.AdamW,
         device=device,
-        save_path="output",
+        save_path="output/",
     )
 
     fed_trainer.set_data(
@@ -184,7 +184,7 @@ def main():
 
     # FedAvg strategy
 #    fed_trainer.set_client_and_server(
-#        strategy=strategies.MyFedAvg(
+#        strategy=FedAvg(
 #            fraction_fit=0.00001,
 #            fraction_evaluate=1, 
 #            min_fit_clients=5, 
@@ -195,9 +195,9 @@ def main():
 #            fit_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn(),
 #            #evaluate_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn()
 #            evaluate_fn=evaluate_f,
-#            initial_parameters=None,
+#            initial_parameters=None
 #        ),
-#        num_rounds=25,
+#        num_rounds=50,
 #        log_every=1,
 #    )
 
@@ -209,7 +209,7 @@ def main():
             writer=server_writer,
             param_split=split_index,
             weighted_loss=False,
-            group_at_end=True,
+            group_at_end=False,
             # Parameters like FedAvg
             fraction_fit=0.00001,   #0.00001
             fraction_evaluate=1,
@@ -221,7 +221,7 @@ def main():
             fit_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn(),
             # evaluate_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn()
             evaluate_fn=evaluate_f,
-            initial_parameters=start_parameters,
+            initial_parameters=None,
         ),
         num_rounds=50,
         log_every=1,
