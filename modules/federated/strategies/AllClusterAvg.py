@@ -16,6 +16,7 @@ from flwr.server.client_proxy import ClientProxy
 from flwr.server.client_manager import ClientManager
 import numpy as np
 import flwr
+import torch
 from modules.federated.efficientnet import EfficientNetModel
 from torch.utils.tensorboard import SummaryWriter
 from modules.federated.strategies.utils import get_evaluate_fn, get_fit_metrics_aggregation_fn
@@ -57,6 +58,7 @@ class AllClusterAvg(Strategy):
         evaluate_fn: Optional[Callable] = None,
         initial_parameters: Optional[Parameters] = None,
         writer: Optional[SummaryWriter] = None,
+        save_path: Optional[str] = None
         ):
         super().__init__()
         self.fraction_fit = fraction_fit
@@ -72,6 +74,7 @@ class AllClusterAvg(Strategy):
         self.group_at_end = group_at_end
         self.weighted_loss = weighted_loss
         self.writer = writer
+        self.save_path = save_path
         if initial_parameters is not None:
             tensors = parameters_to_ndarrays(initial_parameters)
             if self.group_at_end:
@@ -405,6 +408,25 @@ class AllClusterAvg(Strategy):
                 for metric in group_data["metrics"].keys():
                     aggregated_metrics[f"{group_name}_{metric}"] = 0
 
+        if self.save_path is not None:
+            for i in range(len(self.group_split)):
+                group = f"group{i}"
+                group_param = parameters_to_ndarrays(self.group_param[group])
+                global_param = parameters_to_ndarrays(self.global_param)
+                if self.group_at_end:
+                    parameters = global_param + group_param
+                else:
+                    parameters = group_param + global_param
+                
+                model = EfficientNetModel()
+                base_state_dict = model.state_dict()
+                param_names = list(base_state_dict.keys())
+                new_state_dict = {}
+                for name, array in zip(param_names, parameters):
+                    new_state_dict[name] = torch.from_numpy(array)
+
+                model.load_state_dict(new_state_dict)
+                torch.save(model.state_dict(), f"{self.save_path}/{group}_{server_round}.pt")
         return global_loss, aggregated_metrics
 
     def evaluate(

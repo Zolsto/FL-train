@@ -92,17 +92,9 @@ def main():
     partitioner_val_contactNonPolarized.dataset = val_dataset_contactNonPolarized
     partitioner_val_nonContactPolarized.dataset = val_dataset_nonContactPolarized
 
-    #print(partitioner_train_contactPolarized.is_dataset_assigned())
-    #print(partitioner_train_contactNonPolarized.is_dataset_assigned())
-    #print(partitioner_train_nonContactPolarized.is_dataset_assigned())
-
     partitioner_train_contactPolarized.create_partitions()
     partitioner_train_contactNonPolarized.create_partitions()
     partitioner_train_nonContactPolarized.create_partitions()
-
-    #print(partitioner_val_contactPolarized.is_dataset_assigned())
-    #print(partitioner_val_contactNonPolarized.is_dataset_assigned())
-    #print(partitioner_val_nonContactPolarized.is_dataset_assigned())
 
     partitioner_val_contactPolarized.create_partitions()
     partitioner_val_contactNonPolarized.create_partitions()
@@ -114,9 +106,16 @@ def main():
     list_val_datasets = [val_dataset_contactPolarized, val_dataset_contactNonPolarized, val_dataset_nonContactPolarized]
     val_dataset = merge_skin_lesion_datasets(list_val_datasets)
 
+    # Create 2 versions of the test dataset
     list_test_datasets = [test_dataset_contactPolarized, test_dataset_contactNonPolarized, test_dataset_nonContactPolarized]
     test_dataset = merge_skin_lesion_datasets(list_test_datasets)
     test_dataloader = DataLoader(test_dataset)
+    test_dict = {
+        "group0" : DataLoader(test_dataset_contactPolarized),
+        "group1" : DataLoader(test_dataset_contactNonPolarized),
+        "group2" : DataLoader(test_dataset_nonContactPolarized)
+    }
+
 
     train_combined_partitioner = CombinedDirichletPartitioner([partitioner_train_contactPolarized, partitioner_train_contactNonPolarized, partitioner_train_nonContactPolarized], train_dataset)
     val_combined_partitioner = CombinedDirichletPartitioner([partitioner_val_contactPolarized, partitioner_val_contactNonPolarized, partitioner_val_nonContactPolarized], val_dataset)
@@ -135,7 +134,7 @@ def main():
     print("CUDA device count:", torch.cuda.device_count())
     print("CUDA current device:", torch.cuda.current_device())
     print("CUDA device name:", torch.cuda.get_device_name(0))
-    model = EfficientNetModel(num_classes=6, fine_tune_layers=True, premodel="pre-sint")
+    model = EfficientNetModel(num_classes=6, fine_tune_layers=True, premodel="presint")
     # Load pre-trained weights
     pre_trained_weights = [layer.cpu().numpy() for layer in model.state_dict().values()]
     #print(list(model.state_dict().keys()))
@@ -145,7 +144,7 @@ def main():
         if split_index > 0:
             break
 
-        if "features.2" in name:
+        if "classifier" in name:
             split_index = i
     
     print(split_index)
@@ -154,7 +153,7 @@ def main():
     loss_fn = torch.nn.CrossEntropyLoss()
     #raise Exception("Stopped")
 
-    logdir = "output/ClusterAvg/start2-nopre"
+    logdir = "output/ClusterAvg/endC-nopre"
     os.makedirs(logdir, exist_ok=True)
     server_writer = SummaryWriter(log_dir=logdir)
 
@@ -164,7 +163,7 @@ def main():
         criterion=loss_fn,
         optimizer=torch.optim.AdamW,
         device=device,
-        save_path="output/",
+        save_path=logdir,
     )
 
     fed_trainer.set_data(
@@ -180,6 +179,7 @@ def main():
         criterion=loss_fn,
         dataloader=test_dataloader,
         writer=server_writer,
+        loader_dict=test_dict
     )
 
     # FedAvg strategy
@@ -208,8 +208,9 @@ def main():
             group_split=group_split,
             writer=server_writer,
             param_split=split_index,
-            weighted_loss=False,
-            group_at_end=False,
+            weighted_loss=True,
+            group_at_end=True,
+            save_path=logdir,
             # Parameters like FedAvg
             fraction_fit=0.00001,   #0.00001
             fraction_evaluate=1,

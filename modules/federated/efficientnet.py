@@ -5,9 +5,8 @@ from torchvision.models import EfficientNet_B0_Weights
 from collections import OrderedDict
 
 class EfficientNetModel(nn.Module):
-    def __init__(self, num_classes: int=6, fine_tune_layers: bool=True, premodel: str=None):
+    def __init__(self, num_classes: int=6, fine_tune_layers: bool=True, premodel: str=None, weights: list=None):
         super().__init__()
-        
         self.model = models.efficientnet_b0(weights=EfficientNet_B0_Weights.DEFAULT, progress=False)
 
         if fine_tune_layers == True:
@@ -27,7 +26,15 @@ class EfficientNetModel(nn.Module):
             nn.Dropout(p=0.2),
             nn.Linear(in_features=128, out_features=num_classes)
         )
-        if premodel is not None:
+        if weights is not None:
+            param_names = [name for name, _ in self.model.named_parameters()]
+            state_dict = {}
+            for name, array in zip(param_names, weights):
+                state_dict[name] = torch.from_numpy(array)
+            
+            self.model.load_state_dict(state_dict)
+
+        elif premodel is not None:
             new_dict = OrderedDict()
             pretrained_dict = torch.load(f"../pretrain/modelli/{premodel}/best_{premodel}.pt", weights_only=True)
             # Remove 'model.' (6 char) from weights name in the pretrained state_dict

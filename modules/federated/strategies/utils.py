@@ -262,7 +262,8 @@ def get_evaluate_fn(
     device: Union[torch.device, str],
     criterion: torch.nn.Module,
     dataloader: torch.utils.data.DataLoader,
-    writer: Optional[SummaryWriter] = None
+    writer: Optional[SummaryWriter] = None,
+    loader_dict: Optional[Dict[str, torch.utils.data.DataLoader]] = None
 ) -> Callable[[int, NDArrays, Dict[str, Scalar]], Tuple[float, Dict[str, Scalar]]]:
     """
     Get the function to evaluate the model on the test set.
@@ -291,12 +292,19 @@ def get_evaluate_fn(
         # Update the model with the latest parameters
         set_weights(model, parameters)
 
+        if name!="global" and loader_dict is not None:
+            # Use the specific dataloader for the group
+            loader = loader_dict[name]
+        else:
+            # Use the default dataloader
+            loader = dataloader
+
         # Evaluate the model
         metrics = test(
             model=model,
             device=device,
             criterion=criterion,  # config["criterion"],
-            dataloader=dataloader,
+            dataloader=loader,
         )
         if writer is not None:
             print(f"Logging {name} results: loss({metrics['loss']}) accuracy({metrics['accuracy']})")
