@@ -33,7 +33,6 @@ class EfficientNetModel(nn.Module):
                 state_dict[name] = torch.from_numpy(array)
             
             self.model.load_state_dict(state_dict)
-
         elif premodel is not None:
             new_dict = OrderedDict()
             pretrained_dict = torch.load(f"../pretrain/modelli/{premodel}/best_{premodel}.pt", weights_only=True)

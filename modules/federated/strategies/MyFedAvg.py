@@ -52,7 +52,8 @@ class MyFedAvg(Strategy):
             evaluate_fn: Optional[Callable] = None,
             fit_metrics_aggregation_fn: Optional[Callable] = None,
             initial_parameters: Optional[Parameters] = None,
-            writer: Optional[SummaryWriter] = None
+            writer: Optional[SummaryWriter] = None,
+            save_path: Optional[str] = None
         ):
         super().__init__()
         self.fraction_fit = fraction_fit
@@ -65,6 +66,7 @@ class MyFedAvg(Strategy):
         self.evaluate_fn = evaluate_fn
         self.parameters = initial_parameters
         self.writer = writer
+        self.save_path = save_path
 
     def initialize_parameters(
         self,
@@ -201,6 +203,18 @@ class MyFedAvg(Strategy):
         aggregated_metrics['metrics'] = {}
         for metric_name, metric_values in all_metrics['metrics'].items():
             aggregated_metrics['metrics'][metric_name] = np.average(metric_values, weights=all_metrics['num_examples'])
+        
+        if self.save_path is not None:
+            parameters = parameters_to_ndarrays(self.parameters)
+            model = EfficientNetModel()
+            base_state_dict = model.state_dict()
+            param_names = list(base_state_dict.keys())
+            new_state_dict = {}
+            for name, array in zip(param_names, parameters):
+                new_state_dict[name] = torch.from_numpy(array)
+
+            model.load_state_dict(new_state_dict)
+            torch.save(model.state_dict(), f"{self.save_path}/model.pt")
 
         return aggregated_metrics['loss'], aggregated_metrics
 

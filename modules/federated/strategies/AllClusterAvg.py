@@ -426,7 +426,7 @@ class AllClusterAvg(Strategy):
                     new_state_dict[name] = torch.from_numpy(array)
 
                 model.load_state_dict(new_state_dict)
-                torch.save(model.state_dict(), f"{self.save_path}/{group}_{server_round}.pt")
+                torch.save(model.state_dict(), f"{self.save_path}/{group}.pt")
         return global_loss, aggregated_metrics
 
     def evaluate(
