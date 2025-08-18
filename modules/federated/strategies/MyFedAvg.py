@@ -18,27 +18,7 @@ import numpy as np
 import flwr
 import torch
 from modules.federated.efficientnet import EfficientNetModel
-from torch.utils.tensorboard import SummaryWriter
 from modules.federated.strategies.utils import get_evaluate_fn, get_fit_metrics_aggregation_fn
-
-
-def get_group(cid, group_split: List[int]) -> str:
-    '''
-    Get the group index for a given client ID based on the group split.
-    '''
-    cid = int(cid)
-    if group_split is None:
-        return "group0"
-
-    if cid < group_split[0]:
-        return "group0"
-    
-    for i in range(1, len(group_split)):
-        if group_split[i-1] <= cid < group_split[i]:
-            return f"group{i}"
-    
-    raise ValueError(f"Client ID {cid} does not belong to any group in the split {group_split}.")
-    return "group0"
 
 class MyFedAvg(Strategy):
     def __init__(
@@ -53,7 +33,6 @@ class MyFedAvg(Strategy):
             evaluate_fn: Optional[Callable] = None,
             fit_metrics_aggregation_fn: Optional[Callable] = None,
             initial_parameters: Optional[Parameters] = None,
-            writer: Optional[SummaryWriter] = None,
             save_path: Optional[str] = None
         ):
         super().__init__()
@@ -66,7 +45,6 @@ class MyFedAvg(Strategy):
         self.on_evaluate_config_fn = on_evaluate_config_fn
         self.evaluate_fn = evaluate_fn
         self.parameters = initial_parameters
-        self.writer = writer
         self.save_path = save_path
 
     def initialize_parameters(
@@ -144,7 +122,7 @@ class MyFedAvg(Strategy):
         for client in range(len(weights)):
             w = examples[client] / total_examples
             for i in range(len(weights[client])):
-                avg[i] = weights[client][i] * w
+                avg[i] += weights[client][i] * w
         
         self.parameters = ndarrays_to_parameters(avg)
         return self.parameters, {}

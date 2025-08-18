@@ -223,10 +223,11 @@ class AllClusterAvg(Strategy):
     
         # Initialize variables to save weights and num_examples
         updates = []
-        group_examples = {}
+        
         base_param = parameters_to_ndarrays(results[0][1].parameters)
         global_avg = []
         group_avg = {}
+        clients_trained = {}
         if self.group_at_end:
             global_avg = [np.zeros_like(layer, dtype=np.float32) for layer in base_param[:self.param_split]]
         else:
@@ -242,21 +243,25 @@ class AllClusterAvg(Strategy):
             updates.append(train_data)
             # initialize this group avg to 0
             if group not in group_avg.keys():
+                clients_trained[group] = 0
                 if self.group_at_end:
                     group_avg[group] = [np.zeros_like(layer, dtype=np.float32) for layer in base_param[self.param_split:]]
                 else:
                     group_avg[group] = [np.zeros_like(layer, dtype=np.float32) for layer in base_param[:self.param_split]]
+
+            clients_trained[group] += 1
         
         # Compute total number of examples (global and per group)
-        n_list = [item[2] for item in updates]
-        total_examples = np.sum(n_list)
+        group_examples = {}
+        total_examples = 0
         for k in group_avg.keys():
             g_list = [item[2] for item in updates if item[0]==k]
             group_examples[k] = np.sum(g_list)
+            total_examples += group_examples[k]
         
         # Compute global avg and per group avg (only on group present in training)
         for group, params, n in updates:
-            global_w = n / total_examples
+            global_w = 1 / (clients_trained[group]*len(self.group_split))
             group_w = n / group_examples[group]
             if self.group_at_end:
                 global_update = params[:self.param_split]
@@ -429,6 +434,7 @@ class AllClusterAvg(Strategy):
 
                 model.load_state_dict(new_state_dict)
                 torch.save(model.state_dict(), f"{self.save_path}/{group}.pt")
+
         return global_loss, aggregated_metrics
 
     def evaluate(
