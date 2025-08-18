@@ -16,6 +16,7 @@ from flwr.server.client_proxy import ClientProxy
 from flwr.server.client_manager import ClientManager
 import numpy as np
 import flwr
+import torch
 from modules.federated.efficientnet import EfficientNetModel
 from torch.utils.tensorboard import SummaryWriter
 from modules.federated.strategies.utils import get_evaluate_fn, get_fit_metrics_aggregation_fn
