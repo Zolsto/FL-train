@@ -56,6 +56,7 @@ class AllClusterAvg(Strategy):
         fit_metrics_aggregation_fn: Optional[Callable] = None,
         on_evaluate_config_fn: Optional[Callable] = None,
         evaluate_fn: Optional[Callable] = None,
+        separate_eval: bool = False,
         initial_parameters: Optional[Parameters] = None,
         writer: Optional[SummaryWriter] = None,
         save_path: Optional[str] = None
@@ -69,6 +70,7 @@ class AllClusterAvg(Strategy):
         self.on_fit_config_fn = on_fit_config_fn
         self.on_evaluate_config_fn = on_evaluate_config_fn
         self.evaluate_fn = evaluate_fn
+        self.separate_eval = separate_eval
         self.group_split = group_split
         self.param_split = param_split
         self.group_at_end = group_at_end
@@ -463,7 +465,11 @@ class AllClusterAvg(Strategy):
                 else:
                     parameters = group_param + global_param
 
-                group_loss, group_metric = self.evaluate_fn(server_round=server_round, parameters=parameters, config={}, name=group)
+                group_loss, group_metric = self.evaluate_fn(server_round=server_round,
+                    parameters=parameters,
+                    config={},
+                    name=group,
+                    separate_eval=self.separate_eval)
                 # Save the results for each group
                 all_results[group]["loss"] = float(group_loss)
                 all_results[group]["accuracy"] = float(group_metric["accuracy"])

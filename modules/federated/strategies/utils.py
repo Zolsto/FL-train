@@ -287,24 +287,25 @@ def get_evaluate_fn(
         server_round: int,  # pylint: disable=unused-argument
         parameters: NDArrays,
         config: Dict[str, Scalar],  # pylint: disable=unused-argument
-        name: str="global"
+        name: str="global",
+        separate_eval: bool=False
     ) -> Optional[Tuple[float, Dict[str, Scalar]]]:
         # Update the model with the latest parameters
         set_weights(model, parameters)
 
-        if name!="global" and loader_dict is not None:
+        if name!="global" and loader_dict is not None and separate_eval:
             # Use the specific dataloader for the group
-            loader = loader_dict[name]
+            test_loader = loader_dict[name]
         else:
             # Use the default dataloader
-            loader = dataloader
+            test_loader = dataloader
 
         # Evaluate the model
         metrics = test(
             model=model,
             device=device,
             criterion=criterion,  # config["criterion"],
-            dataloader=loader,
+            dataloader=test_loader,
         )
         if writer is not None:
             print(f"Logging {name} results: loss({metrics['loss']}) accuracy({metrics['accuracy']})")
