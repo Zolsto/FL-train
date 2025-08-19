@@ -52,11 +52,11 @@ class AllClusterAvg(Strategy):
         min_evaluate_clients: int = 2,
         min_available_clients: int = 2,
         weighted_loss: bool = True,
+        separate_eval: bool = True,
         on_fit_config_fn: Optional[Callable] = None,
         fit_metrics_aggregation_fn: Optional[Callable] = None,
         on_evaluate_config_fn: Optional[Callable] = None,
         evaluate_fn: Optional[Callable] = None,
-        separate_eval: bool = True,
         initial_parameters: Optional[Parameters] = None,
         writer: Optional[SummaryWriter] = None,
         save_path: Optional[str] = None
@@ -543,5 +543,3 @@ class AllClusterAvg(Strategy):
                 model.load_state_dict(new_state_dict)
                 torch.save(model.state_dict(), f"{self.save_path}/{group}.pt")
                 print(f"Model for {group} saved at round {server_round}.")
-        else:
-            print("No save path specified, model not saved.")

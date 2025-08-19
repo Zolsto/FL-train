@@ -168,8 +168,10 @@ class MyFedAvg(Strategy):
         if not results:
             return None, {}
         
-        all_metrics = {}
+        all_metrics = { "loss": [], "num_examples": [] }
         for _, evres in results:
+            all_metrics['loss'].append(evres.loss)
+            all_metrics['num_examples'].append(evres.num_examples)
             for metric_name, metric_value in evres.metrics.items():
                 if metric_name not in all_metrics.keys():
                     all_metrics[metric_name] = []
@@ -178,7 +180,7 @@ class MyFedAvg(Strategy):
         
         aggregated_metrics = {}
         for metric_name, metric_values in all_metrics.items():
-            if metric_name == "num_examples":
+            if metric_name=="num_examples":
                 aggregated_metrics[metric_name] = np.sum(metric_values)
             else:
                 aggregated_metrics[metric_name] = np.average(metric_values, weights=all_metrics['num_examples'])
@@ -219,7 +221,7 @@ class MyFedAvg(Strategy):
             round (int): The current round of federated learning.
         """
         if self.save_path is not None:
-            param = parameters_to_ndarrays(self.parameters) 
+            parameters = parameters_to_ndarrays(self.parameters) 
             model = EfficientNetModel()
             base_state_dict = model.state_dict()
             param_names = list(base_state_dict.keys())
@@ -228,7 +230,5 @@ class MyFedAvg(Strategy):
                 new_state_dict[name] = torch.from_numpy(array)
 
             model.load_state_dict(new_state_dict)
-            torch.save(model.state_dict(), f"{self.save_path}/{group}.pt")
+            torch.save(model.state_dict(), f"{self.save_path}/model.pt")
             print(f"Model saved at round {server_round}.")
-        else:
-            print("No save path specified, model not saved.")

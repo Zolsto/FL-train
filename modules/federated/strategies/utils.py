@@ -312,7 +312,7 @@ def get_evaluate_fn(
             dataloader=test_loader,
         )
         if writer is not None:
-            print(f"Logging {name} results: loss({metrics['loss']}) accuracy({metrics['accuracy']})")
+            #print(f"Logging {name} results: loss({metrics['loss']}) accuracy({metrics['accuracy']})")
             writer.add_scalar(f"{name}/loss", metrics['loss'], server_round)
             writer.add_scalar(f"{name}/accuracy", metrics['accuracy'], server_round)
             
