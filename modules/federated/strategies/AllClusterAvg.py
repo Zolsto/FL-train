@@ -56,7 +56,7 @@ class AllClusterAvg(Strategy):
         fit_metrics_aggregation_fn: Optional[Callable] = None,
         on_evaluate_config_fn: Optional[Callable] = None,
         evaluate_fn: Optional[Callable] = None,
-        separate_eval: bool = False,
+        separate_eval: bool = True,
         initial_parameters: Optional[Parameters] = None,
         writer: Optional[SummaryWriter] = None,
         save_path: Optional[str] = None
@@ -261,7 +261,11 @@ class AllClusterAvg(Strategy):
         
         # Compute global avg and per group avg (only on group present in training)
         for group, params, n in updates:
-            global_w = 1 / (clients_trained[group]*len(self.group_split))
+            if len(clients_trained)>1:
+                global_w = 1 / (clients_trained[group]*len(clients_trained))
+            else:
+                global_w = n / total_examples
+
             group_w = n / group_examples[group]
             if self.group_at_end:
                 global_update = params[:self.param_split]
