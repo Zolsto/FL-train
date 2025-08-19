@@ -226,15 +226,9 @@ class AllClusterAvg(Strategy):
     
         # Initialize variables to save weights and num_examples
         updates = []
-        
-        base_param = parameters_to_ndarrays(results[0][1].parameters)
-        global_avg = []
         group_avg = {}
         clients_trained = {}
-        if self.group_at_end:
-            global_avg = [np.zeros_like(layer, dtype=np.float32) for layer in base_param[:self.param_split]]
-        else:
-            global_avg = [np.zeros_like(layer, dtype=np.float32) for layer in base_param[self.param_split:]]
+        global_avg = [np.zeros_like(layer, dtype=np.float32) for layer in parameters_to_ndarrays(self.global_param)]
 
         # For each client
         for client, fit_res in results:
@@ -247,10 +241,7 @@ class AllClusterAvg(Strategy):
             # initialize this group avg to 0
             if group not in group_avg.keys():
                 clients_trained[group] = 0
-                if self.group_at_end:
-                    group_avg[group] = [np.zeros_like(layer, dtype=np.float32) for layer in base_param[self.param_split:]]
-                else:
-                    group_avg[group] = [np.zeros_like(layer, dtype=np.float32) for layer in base_param[:self.param_split]]
+                group_avg[group] = [np.zeros_like(layer, dtype=np.float32) for layer in parameters_to_ndarrays(self.group_param[group])]
 
             clients_trained[group] += 1
         
@@ -263,13 +254,10 @@ class AllClusterAvg(Strategy):
             total_examples += group_examples[k]
         
         # Compute global avg and per group avg (only on group present in training)
+        base_w = 1 / len(self.group_param)
         for group, params, n in updates:
-            if len(clients_trained)>1:
-                global_w = 1 / (clients_trained[group]*len(clients_trained))
-            else:
-                global_w = n / total_examples
-
             group_w = n / group_examples[group]
+            global_w = group_w * base_w
             if self.group_at_end:
                 global_update = params[:self.param_split]
                 group_update = params[self.param_split:]
@@ -287,6 +275,14 @@ class AllClusterAvg(Strategy):
                 for avg, update in zip(global_avg, global_update):
                     avg += update * global_w
         
+        # If some groups were not trained, their average is considered as unchanged (abstain)
+        if len(group_examples) < len(self.group_param):
+            old_param = parameters_to_ndarrays(self.global_param)
+            for group in self.group_param.keys():
+                if group not in group_examples.keys():
+                    for avg, old in zip(global_avg, old_param):
+                        avg += old * base_w
+                    
         # Update old parameters
         self.global_param = ndarrays_to_parameters(global_avg)
         for k, v in group_avg.items():
