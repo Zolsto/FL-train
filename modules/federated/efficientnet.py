@@ -45,8 +45,6 @@ class EfficientNetModel(nn.Module):
                 new_dict[name] = v
             self.model.load_state_dict(new_dict)
             print(f"Model {premodel} imported successfully.")
-        else:
-            print("Premodel not given. Proceeding with default weights.")
 
     def forward(self, x):
         #return self.model(x)

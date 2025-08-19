@@ -44,6 +44,7 @@ class MyFedAvg(Strategy):
         self.on_fit_config_fn = on_fit_config_fn
         self.on_evaluate_config_fn = on_evaluate_config_fn
         self.evaluate_fn = evaluate_fn
+        self.best_loss = np.inf
         self.parameters = initial_parameters
         self.save_path = save_path
 
@@ -167,33 +168,23 @@ class MyFedAvg(Strategy):
         if not results:
             return None, {}
         
-        all_metrics = { "loss" : [], "accuracy" : [], "num_examples" : [], "metrics" : {} }
+        all_metrics = {}
         for _, evres in results:
-            all_metrics['loss'].append(evres.loss)
-            all_metrics['num_examples'].append(evres.num_examples)
             for metric_name, metric_value in evres.metrics.items():
-                if metric_name not in all_metrics['metrics'].keys():
-                    all_metrics['metrics'][metric_name] = []
+                if metric_name not in all_metrics.keys():
+                    all_metrics[metric_name] = []
 
-                all_metrics['metrics'][metric_name].append(metric_value)
+                all_metrics[metric_name].append(metric_value)
         
         aggregated_metrics = {}
-        aggregated_metrics['loss'] = np.average(all_metrics['loss'], weights=all_metrics['num_examples'])
-        aggregated_metrics['metrics'] = {}
-        for metric_name, metric_values in all_metrics['metrics'].items():
-            aggregated_metrics['metrics'][metric_name] = np.average(metric_values, weights=all_metrics['num_examples'])
+        for metric_name, metric_values in all_metrics.items():
+            if metric_name == "num_examples":
+                aggregated_metrics[metric_name] = np.sum(metric_values)
+            else:
+                aggregated_metrics[metric_name] = np.average(metric_values, weights=all_metrics['num_examples'])
         
-        if self.save_path is not None:
-            parameters = parameters_to_ndarrays(self.parameters)
-            model = EfficientNetModel()
-            base_state_dict = model.state_dict()
-            param_names = list(base_state_dict.keys())
-            new_state_dict = {}
-            for name, array in zip(param_names, parameters):
-                new_state_dict[name] = torch.from_numpy(array)
-
-            model.load_state_dict(new_state_dict)
-            torch.save(model.state_dict(), f"{self.save_path}/model.pt")
+        if self.fraction_evaluate == 0:
+            self.save_model(server_round)
 
         return aggregated_metrics['loss'], aggregated_metrics
 
@@ -208,6 +199,36 @@ class MyFedAvg(Strategy):
 
         # Optional server evaluation
         if self.evaluate_fn is not None:
-            return self.evaluate_fn(server_round=server_round, parameters=parameters_to_ndarrays(parameters), config={})
+            loss, metrics = self.evaluate_fn(server_round=server_round,
+                parameters=parameters_to_ndarrays(parameters),
+                config={})
+            if loss < self.best_loss:
+                self.best_loss = loss
+                self.save_model(server_round)
+
+            return loss, metrics
 
         return None
+
+    def save_model(self, server_round: int) -> None:
+        """
+        Save the current model parameters to disk,
+        if a path was provided.
+
+        Args:
+            round (int): The current round of federated learning.
+        """
+        if self.save_path is not None:
+            param = parameters_to_ndarrays(self.parameters) 
+            model = EfficientNetModel()
+            base_state_dict = model.state_dict()
+            param_names = list(base_state_dict.keys())
+            new_state_dict = {}
+            for name, array in zip(param_names, parameters):
+                new_state_dict[name] = torch.from_numpy(array)
+
+            model.load_state_dict(new_state_dict)
+            torch.save(model.state_dict(), f"{self.save_path}/{group}.pt")
+            print(f"Model saved at round {server_round}.")
+        else:
+            print("No save path specified, model not saved.")

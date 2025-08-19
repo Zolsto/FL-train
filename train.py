@@ -134,7 +134,7 @@ def main():
     print("CUDA device count:", torch.cuda.device_count())
     print("CUDA current device:", torch.cuda.current_device())
     print("CUDA device name:", torch.cuda.get_device_name(0))
-    model = EfficientNetModel(num_classes=6, fine_tune_layers=True, premodel="presint")
+    model = EfficientNetModel(num_classes=6, fine_tune_layers=True, premodel="presint-nonorm")
     # Load pre-trained weights
     pre_trained_weights = [layer.cpu().numpy() for layer in model.state_dict().values()]
     #print(list(model.state_dict().keys()))
@@ -153,7 +153,7 @@ def main():
     loss_fn = torch.nn.CrossEntropyLoss()
     #raise Exception("Stopped")
 
-    logdir = "output/ClusterAvg/test"
+    logdir = "output/ClusterAvg/start2-nonorm-sep"
     os.makedirs(logdir, exist_ok=True)
     server_writer = SummaryWriter(log_dir=logdir)
 
@@ -196,7 +196,7 @@ def main():
 #            fit_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn(),
 #            #evaluate_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn()
 #            evaluate_fn=evaluate_f,
-#            initial_parameters=None
+#            initial_parameters=start_parameters
 #        ),
 #        num_rounds=50,
 #        log_every=1,
@@ -224,7 +224,7 @@ def main():
             fit_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn(),
             # evaluate_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn()
             evaluate_fn=evaluate_f,
-            initial_parameters=None,
+            initial_parameters=start_parameters
         ),
         num_rounds=50,
         log_every=1,
