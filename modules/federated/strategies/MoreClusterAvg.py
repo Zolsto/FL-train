@@ -22,7 +22,7 @@ from torch.utils.tensorboard import SummaryWriter
 from modules.federated.strategies.utils import get_evaluate_fn, get_fit_metrics_aggregation_fn
 
 
-def get_group(cid, group_split: List[int]) -> str:
+def get_group(cid: int, group_split: List[int]) -> str:
     '''
     Get the group index for a given client ID based on the group split.
     '''
@@ -40,12 +40,16 @@ def get_group(cid, group_split: List[int]) -> str:
     raise ValueError(f"Client ID {cid} does not belong to any group in the split {group_split}.")
     return "group0"
 
-class AllClusterAvg(Strategy):
+class MoreClusterAvg(Strategy):
     def __init__(
         self,
+        # list of partition IDs at the start of each group
+        # [0, index1, ..., indexN, num_clients]
+        # group1 IDs (index1 --> index2 - 1), N+1 groups (last is groupN)
         group_split: List[int],
-        param_split: int,
-        group_at_end: bool = True,
+        # list of group layers in this form:
+        # [layers_at_start, index, ..., index, layers_at_end]
+        param_split: List[int],
         fraction_fit: float = 1.0,
         fraction_evaluate: float = 1.0,
         min_fit_clients: int = 2,
@@ -57,7 +61,7 @@ class AllClusterAvg(Strategy):
         fit_metrics_aggregation_fn: Optional[Callable] = None,
         on_evaluate_config_fn: Optional[Callable] = None,
         evaluate_fn: Optional[Callable] = None,
-        initial_parameters: Optional[Parameters] = None,
+        initial_parameters: Optional[NDArrays] = None,
         writer: Optional[SummaryWriter] = None,
         save_path: Optional[str] = None
         ):
@@ -73,30 +77,54 @@ class AllClusterAvg(Strategy):
         self.separate_eval = separate_eval
         self.group_split = group_split
         self.param_split = param_split
-        self.group_at_end = group_at_end
+        base_model = EfficientNetModel()
+        state_dict = base_model.model.state_dict()
+        base_params = [val.cpu().numpy() for val in state_dict.values()]
+        # This list will tell if the layer is a group layer or not
+        self.is_group_layer = []
+        for l in range(len(base_params)):
+            print("You selected the following as group layers:")
+            if l in self.param_split or l<self.param_split[0] or l>=self.param_split[-1]:
+                self.is_group_layer.append(True)
+                print(f"{l} -> {list(state_dict.keys())[l]}")
+            else:
+                self.is_group_layer.append(False)
+
         self.weighted_loss = weighted_loss
         self.writer = writer
         self.save_path = save_path
-        self.group_param = {}
-        self.best_loss = {}
+        self.group_param = { f"group{i}": {} for i in range(len(self.group_split)) }
+        if self.param_split[0] > 0:
+            for group in self.group_param.keys():
+                self.group_param[group]["start"] = []
+        else:
+            for group in self.group_param.keys():
+                self.group_param[group]["start"] = None
+        if self.param_split[-1] < len(base_params):
+            for group in self.group_param.keys():
+                self.group_param[group]["end"] = []
+        else:
+            for group in self.group_param.keys():
+                self.group_param[group]["end"] = None
+        self.best_loss = { f"group{i}": np.inf for i in range(len(self.group_split)) }
         if initial_parameters is not None:
-            tensors = parameters_to_ndarrays(initial_parameters)
-            if self.group_at_end:
-                self.global_param = ndarrays_to_parameters(tensors[:self.param_split])
-                group_initial = ndarrays_to_parameters(tensors[self.param_split:])
-                for i in range(len(self.group_split)):
-                    self.group_param[f"group{i}"] = group_initial
-                    self.best_loss[f"group{i}"] = np.inf
-            else:
-                self.global_param = ndarrays_to_parameters(tensors[self.param_split:])
-                group_initial = ndarrays_to_parameters(tensors[:self.param_split])
-                for i in range(len(self.group_split)):
-                    self.group_param[f"group{i}"] = group_initial
-                    self.best_loss[f"group{i}"] = np.inf
+            self.initial_param = initial_parameters
+            self.global_param = []
+            for l in range(len(self.is_group_layer)):
+                if self.is_group_layer[l]:
+                    # If this is a group layer, save it in the groups parameters
+                    for group in self.group_param.keys():
+                        if l < self.param_split[0]:
+                            self.group_param[group]["start"].append(initial_parameters[l])
+                        elif l >= self.param_split[-1]:
+                            self.group_param[group]["end"].append(initial_parameters[l])
+                        else:
+                            self.group_param[group][l] = initial_parameters[l] 
+                else:
+                    # If this is not a group layer, save it in the global parameters
+                    self.global_param.append(initial_parameters[l])
         else:
             self.global_param = None
-            self.group_param = { f"group{i}": None for i in range(len(self.group_split)) }
-            self.best_loss = { f"group{i}": np.inf for i in range(len(self.group_split)) }
 
 
     def initialize_parameters(
@@ -117,28 +145,49 @@ class AllClusterAvg(Strategy):
         Returns:
             Optional[Parameters]: The initial model parameters to be sent to the clients.
         """
-        
         # If no initial parameters are given, use base model to initialize
         if self.global_param is None:
             base_model = EfficientNetModel()
             state_dict = base_model.model.state_dict()
-            all_parameters = [val.cpu().numpy() for val in state_dict.values()]
-            if self.group_at_end:
-                self.global_param = ndarrays_to_parameters(all_parameters[:self.param_split])
-                for k, v in self.group_param.items():
-                    if v is None:
-                        self.group_param[k] = ndarrays_to_parameters(all_parameters[self.param_split:])
+            base_params = [val.cpu().numpy() for val in state_dict.values()]
+            if self.param_split[0] > 0:
+                # Take the first part as group parameters
+                for g in range(len(self.group_split)):
+                    group = f"group{g}"
+                    self.group_param[group]["start"] = base_params[:self.param_split[0]]
             else:
-                self.global_param = ndarrays_to_parameters(all_parameters[self.param_split:])
-                for k, v in self.group_param.items():
-                    self.group_param[k] = ndarrays_to_parameters(all_parameters[:self.param_split])
-
-            return ndarrays_to_parameters(all_parameters)
+                # If no end part, just take the last layer as group parameters
+                for g in range(len(self.group_split)):
+                    group = f"group{g}"
+                    self.group_param[group]["start"] = None
             
-        global_param = parameters_to_ndarrays(self.global_param)
-        group_param = parameters_to_ndarrays(self.group_param["group0"])
-        all_parameters = global_param + group_param
-        return ndarrays_to_parameters(all_parameters)
+            if self.param_split[-1] < len(base_params):
+                # Take the last part as group parameters
+                for g in range(len(self.group_split)):
+                    group = f"group{g}"
+                    self.group_param[group]["end"] = base_params[self.param_split[-1]:]
+            else:
+                # If no end part, just take the last layer as group parameters
+                for g in range(len(self.group_split)):
+                    group = f"group{g}"
+                    self.group_param[group]["end"] = None
+            
+            # The other are indexes of layers to take as group parameters
+            start = max(0, self.param_split[0])
+            end = min(len(base_params), self.param_split[-1])
+            params = []
+            for l in range(start, end):
+                if l in self.param_split[1:-1]:
+                    for g in range(len(self.group_split)):
+                        group = f"group{g}"
+                        self.group_param[group][l] = base_params[l]
+                else:
+                    params.append(base_params[l])
+
+            self.global_param = params
+            return ndarrays_to_parameters(base_params)
+    
+        return ndarrays_to_parameters(self.initial_param)
         
     def configure_fit(
         self,
