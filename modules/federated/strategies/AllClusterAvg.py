@@ -77,23 +77,26 @@ class AllClusterAvg(Strategy):
         self.weighted_loss = weighted_loss
         self.writer = writer
         self.save_path = save_path
+        self.group_param = {}
+        self.best_loss = {}
         if initial_parameters is not None:
             tensors = parameters_to_ndarrays(initial_parameters)
             if self.group_at_end:
                 self.global_param = ndarrays_to_parameters(tensors[:self.param_split])
                 group_initial = ndarrays_to_parameters(tensors[self.param_split:])
-                self.group_param = {}
                 for i in range(len(self.group_split)):
                     self.group_param[f"group{i}"] = group_initial
+                    self.best_loss[f"group{i}"] = np.inf
             else:
                 self.global_param = ndarrays_to_parameters(tensors[self.param_split:])
                 group_initial = ndarrays_to_parameters(tensors[:self.param_split])
-                self.group_param = {}
                 for i in range(len(self.group_split)):
                     self.group_param[f"group{i}"] = group_initial
+                    self.best_loss[f"group{i}"] = np.inf
         else:
             self.global_param = None
             self.group_param = { f"group{i}": None for i in range(len(self.group_split)) }
+            self.best_loss = { f"group{i}": np.inf for i in range(len(self.group_split)) }
 
 
     def initialize_parameters(
@@ -366,9 +369,9 @@ class AllClusterAvg(Strategy):
         if not results:
             return None, {}
 
-        groups_metrics = { k : { "loss": [], "num_examples": [], "metrics": {} } for k in self.group_param.keys() }
+        groups_metrics = { k : { "loss": [], "num_examples": [] } for k in self.group_param.keys() }
 
-        global_metrics = { "loss": [], "num_examples": [], "metrics": {} }
+        global_metrics = { "loss": [], "num_examples": [] }
 
         for client, evaluate_res in results:
             group = get_group(evaluate_res.metrics["partition_id"], self.group_split)
@@ -383,63 +386,44 @@ class AllClusterAvg(Strategy):
         
             # Add other metrics if present
             for metric_name, metric_value in evaluate_res.metrics.items():
-                if metric_name not in groups_metrics[group]["metrics"].keys():
-                    groups_metrics[group]["metrics"][metric_name] = []
+                if metric_name not in groups_metrics[group].keys():
+                    groups_metrics[group][metric_name] = []
 
-                if metric_name not in global_metrics["metrics"].keys():
-                    global_metrics["metrics"][metric_name] = []
+                if metric_name not in global_metrics.keys():
+                    global_metrics[metric_name] = []
 
-                groups_metrics[group]["metrics"][metric_name].append(metric_value)
-                global_metrics["metrics"][metric_name].append(metric_value)
+                groups_metrics[group][metric_name].append(metric_value)
+                global_metrics[metric_name].append(metric_value)
             
         # Aggregate all metrics
         aggregated_metrics = {}
-        global_loss = np.average(global_metrics["loss"], weights=global_metrics["num_examples"])
-        aggregated_metrics["global_loss"] = global_loss
-        aggregated_metrics["global_examples"] = np.sum(global_metrics["num_examples"])
-        for k, v in global_metrics["metrics"].items():
-            weighted_avg = np.average(v, weights=global_metrics["num_examples"])
+        for k, v in global_metrics.items():
+            if k=="num_examples":
+                weighted_avg = np.sum(v)
+            else:
+                weighted_avg = np.average(v, weights=global_metrics["num_examples"])
+
             aggregated_metrics[f"global_{k}"] = weighted_avg
             
         for group_name, group_data in groups_metrics.items():
             group_examples = np.sum(group_data["num_examples"])
             if group_examples > 0:
-                # Group loss (weighted average)
-                group_loss = np.average(group_data["loss"], weights=group_data["num_examples"])
-                aggregated_metrics[f"{group_name}_loss"] = group_loss
-                aggregated_metrics[f"{group_name}_examples"] = group_examples
-            
-                # Other metrics of the group (weighted average)
-                for metric_name, metric_values in group_data["metrics"].items():
-                    weighted_avg = np.average(metric_values, weights=group_data["num_examples"])
+                # Metrics of the group (weighted average)
+                for metric_name, metric_values in group_data.items():
+                    if metric_name=="num_examples":
+                        weighted_avg = group_examples
+                    else:
+                        weighted_avg = np.average(metric_values, weights=group_data["num_examples"])
+
                     aggregated_metrics[f"{group_name}_{metric_name}"] = weighted_avg
             else:
-                aggregated_metrics[f"{group_name}_loss"] = 0
-                aggregated_metrics[f"{group_name}_examples"] = 0
-                for metric in group_data["metrics"].keys():
+                for metric in group_data.keys():
                     aggregated_metrics[f"{group_name}_{metric}"] = 0
 
-        if self.save_path is not None:
-            for i in range(len(self.group_split)):
-                group = f"group{i}"
-                group_param = parameters_to_ndarrays(self.group_param[group])
-                global_param = parameters_to_ndarrays(self.global_param)
-                if self.group_at_end:
-                    parameters = global_param + group_param
-                else:
-                    parameters = group_param + global_param
-                
-                model = EfficientNetModel()
-                base_state_dict = model.state_dict()
-                param_names = list(base_state_dict.keys())
-                new_state_dict = {}
-                for name, array in zip(param_names, parameters):
-                    new_state_dict[name] = torch.from_numpy(array)
+        if self.fraction_evaluate == 0:
+            self.save_model(server_round)
 
-                model.load_state_dict(new_state_dict)
-                torch.save(model.state_dict(), f"{self.save_path}/{group}.pt")
-
-        return global_loss, aggregated_metrics
+        return aggregated_metrics["global_loss"], aggregated_metrics
 
     def evaluate(
         self,
@@ -481,8 +465,12 @@ class AllClusterAvg(Strategy):
                     name=group,
                     separate_eval=self.separate_eval)
                 # Save the results for each group
-                all_results[group]["loss"] = float(group_loss)
-                all_results[group]["accuracy"] = float(group_metric["accuracy"])
+                all_results[group]["loss"] = group_loss
+                all_results[group]["accuracy"] = group_metric["accuracy"]
+
+                if group_loss<self.best_loss[group]:
+                    self.best_loss[group] = group_loss
+                    self.save_model(server_round=server_round, name=group)
                     
                 # Weighted average for global results
                 if self.weighted_loss:
@@ -505,3 +493,55 @@ class AllClusterAvg(Strategy):
             return all_results["global"]["loss"], all_results
 
         return None
+    
+    def save_model(self, server_round: int, name: str="all") -> None:
+        """
+        Save the current model parameters to disk.
+        This method saves the global and group-specific parameters to the specified
+        save path, if provided.
+
+        Args:
+            round (int): The current round of federated learning.
+        """
+        if self.save_path is not None:
+            if name == "all":
+                for i in range(len(self.group_split)):
+                    group = f"group{i}"
+                    group_param = parameters_to_ndarrays(self.group_param[group])
+                    global_param = parameters_to_ndarrays(self.global_param)
+                    if self.group_at_end:
+                        parameters = global_param + group_param
+                    else:
+                        parameters = group_param + global_param
+                
+                    model = EfficientNetModel()
+                    base_state_dict = model.state_dict()
+                    param_names = list(base_state_dict.keys())
+                    new_state_dict = {}
+                    for name, array in zip(param_names, parameters):
+                        new_state_dict[name] = torch.from_numpy(array)
+
+                    model.load_state_dict(new_state_dict)
+                    torch.save(model.state_dict(), f"{self.save_path}/{group}.pt")
+                    print(f"Model for {group} saved at round {server_round}.")
+            else:
+                group = name
+                group_param = parameters_to_ndarrays(self.group_param[group])
+                global_param = parameters_to_ndarrays(self.global_param)
+                if self.group_at_end:
+                    parameters = global_param + group_param
+                else:
+                    parameters = group_param + global_param
+             
+                model = EfficientNetModel()
+                base_state_dict = model.state_dict()
+                param_names = list(base_state_dict.keys())
+                new_state_dict = {}
+                for name, array in zip(param_names, parameters):
+                    new_state_dict[name] = torch.from_numpy(array)
+
+                model.load_state_dict(new_state_dict)
+                torch.save(model.state_dict(), f"{self.save_path}/{group}.pt")
+                print(f"Model for {group} saved at round {server_round}.")
+        else:
+            print("No save path specified, model not saved.")

@@ -153,7 +153,7 @@ def main():
     loss_fn = torch.nn.CrossEntropyLoss()
     #raise Exception("Stopped")
 
-    logdir = "output/FedAvg/my-nopre"
+    logdir = "output/ClusterAvg/test"
     os.makedirs(logdir, exist_ok=True)
     server_writer = SummaryWriter(log_dir=logdir)
 
@@ -183,52 +183,52 @@ def main():
     )
 
     # FedAvg strategy
-    fed_trainer.set_client_and_server(
-        strategy=strategies.MyFedAvg(
-            save_path=logdir,
-            fraction_fit=0.00001,
-            fraction_evaluate=1, 
-            min_fit_clients=5, 
-            #min_evaluate_clients=10,
-            min_available_clients=10, 
-            on_fit_config_fn=strategies.get_on_fit_config({"local_epochs": 5}),
-            #on_evaluate_config_fn=strategies.get_on_evaluate_config({"batch_size": 32}),
-            fit_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn(),
-            #evaluate_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn()
-            evaluate_fn=evaluate_f,
-            initial_parameters=None
-        ),
-        num_rounds=50,
-        log_every=1,
-    )
-
-    # Personalized strategy
 #    fed_trainer.set_client_and_server(
-#        strategy=strategies.AllClusterAvg(
-#            # Parameters of ClusterAvg
-#            group_split=group_split,
-#            writer=server_writer,
-#            param_split=split_index,
-#            weighted_loss=True,
-#            group_at_end=False,
+#        strategy=strategies.MyFedAvg(
 #            save_path=logdir,
-#            separate_eval=True,
-#            # Parameters like FedAvg
-#            fraction_fit=0.00001,   #0.00001
-#            fraction_evaluate=1,
-#            min_fit_clients=5,
-#            # min_evaluate_clients=10,
-#            min_available_clients=10,
+#            fraction_fit=0.00001,
+#            fraction_evaluate=1, 
+#            min_fit_clients=5, 
+#            #min_evaluate_clients=10,
+#            min_available_clients=10, 
 #            on_fit_config_fn=strategies.get_on_fit_config({"local_epochs": 5}),
-#            # on_evaluate_config_fn=strategies.get_on_evaluate_config({"batch_size": 32}),
+#            #on_evaluate_config_fn=strategies.get_on_evaluate_config({"batch_size": 32}),
 #            fit_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn(),
-#            # evaluate_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn()
+#            #evaluate_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn()
 #            evaluate_fn=evaluate_f,
-#            initial_parameters=None,
+#            initial_parameters=None
 #        ),
 #        num_rounds=50,
 #        log_every=1,
 #    )
+
+    # Personalized strategy
+    fed_trainer.set_client_and_server(
+        strategy=strategies.AllClusterAvg(
+            # Parameters of ClusterAvg
+            group_split=group_split,
+            writer=server_writer,
+            param_split=split_index,
+            weighted_loss=True,
+            group_at_end=False,
+            save_path=logdir,
+            separate_eval=True,
+            # Parameters like FedAvg
+            fraction_fit=0.00001,   #0.00001
+            fraction_evaluate=1,
+            min_fit_clients=5,
+            # min_evaluate_clients=10,
+            min_available_clients=10,
+            on_fit_config_fn=strategies.get_on_fit_config({"local_epochs": 5}),
+            # on_evaluate_config_fn=strategies.get_on_evaluate_config({"batch_size": 32}),
+            fit_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn(),
+            # evaluate_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn()
+            evaluate_fn=evaluate_f,
+            initial_parameters=None,
+        ),
+        num_rounds=50,
+        log_every=1,
+    )
 
     fed_trainer(num_clients=80)
     server_writer.close()
