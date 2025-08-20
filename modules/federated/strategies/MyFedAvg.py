@@ -1,3 +1,6 @@
+import flwr
+import torch
+import numpy as np
 from flwr.server.strategy import Strategy
 from flwr.common import (
     FitRes,
@@ -14,11 +17,9 @@ from flwr.common import (
 from typing import List, Optional, Tuple, Dict, Callable, Union
 from flwr.server.client_proxy import ClientProxy
 from flwr.server.client_manager import ClientManager
-import numpy as np
-import flwr
-import torch
 from modules.federated.efficientnet import EfficientNetModel
-from modules.federated.strategies.utils import get_evaluate_fn, get_fit_metrics_aggregation_fn
+#from modules.federated.strategies.utils import get_evaluate_fn, get_fit_metrics_aggregation_fn
+from modules.federated.utils import get_weights, set_weights
 
 class MyFedAvg(Strategy):
     def __init__(

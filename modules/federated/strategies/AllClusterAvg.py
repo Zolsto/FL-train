@@ -1,3 +1,6 @@
+import flwr
+import torch
+import numpy as np
 from flwr.server.strategy import Strategy
 from flwr.common import (
     FitRes,
@@ -14,12 +17,10 @@ from flwr.common import (
 from typing import List, Optional, Tuple, Dict, Callable, Union
 from flwr.server.client_proxy import ClientProxy
 from flwr.server.client_manager import ClientManager
-import numpy as np
-import flwr
-import torch
 from modules.federated.efficientnet import EfficientNetModel
 from torch.utils.tensorboard import SummaryWriter
-from modules.federated.strategies.utils import get_evaluate_fn, get_fit_metrics_aggregation_fn
+#from modules.federated.strategies.utils import get_evaluate_fn, get_fit_metrics_aggregation_fn
+from modules.federated.utils import get_weights, set_weights
 
 
 def get_group(cid, group_split: List[int]) -> str:
@@ -511,13 +512,14 @@ class AllClusterAvg(Strategy):
                         parameters = group_param + global_param
                 
                     model = EfficientNetModel()
-                    base_state_dict = model.state_dict()
-                    param_names = list(base_state_dict.keys())
-                    new_state_dict = {}
-                    for name, array in zip(param_names, parameters):
-                        new_state_dict[name] = torch.from_numpy(array)
+                    set_weights(model, parameters)
+                    #base_state_dict = model.state_dict()
+                    #param_names = list(base_state_dict.keys())
+                    #new_state_dict = {}
+                    #for name, array in zip(param_names, parameters):
+                    #    new_state_dict[name] = torch.from_numpy(array)
 
-                    model.load_state_dict(new_state_dict)
+                    #model.load_state_dict(new_state_dict)
                     torch.save(model.state_dict(), f"{self.save_path}/{group}.pt")
                     print(f"Model for {group} saved at round {server_round}.")
             else:
@@ -530,12 +532,13 @@ class AllClusterAvg(Strategy):
                     parameters = group_param + global_param
              
                 model = EfficientNetModel()
-                base_state_dict = model.state_dict()
-                param_names = list(base_state_dict.keys())
-                new_state_dict = {}
-                for name, array in zip(param_names, parameters):
-                    new_state_dict[name] = torch.from_numpy(array)
+                set_weights(model, parameters)
+                #base_state_dict = model.state_dict()
+                #param_names = list(base_state_dict.keys())
+                #new_state_dict = {}
+                #for name, array in zip(param_names, parameters):
+                #    new_state_dict[name] = torch.from_numpy(array)
 
-                model.load_state_dict(new_state_dict)
+                #model.load_state_dict(new_state_dict)
                 torch.save(model.state_dict(), f"{self.save_path}/{group}.pt")
                 print(f"Model for {group} saved at round {server_round}.")

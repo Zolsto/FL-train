@@ -1,3 +1,7 @@
+import flwr
+import torch
+import numpy as np
+
 from flwr.server.strategy import Strategy
 from flwr.common import (
     FitRes,
@@ -14,31 +18,10 @@ from flwr.common import (
 from typing import List, Optional, Tuple, Dict, Callable, Union
 from flwr.server.client_proxy import ClientProxy
 from flwr.server.client_manager import ClientManager
-import numpy as np
-import flwr
-import torch
 from modules.federated.efficientnet import EfficientNetModel
 from torch.utils.tensorboard import SummaryWriter
-from modules.federated.strategies.utils import get_evaluate_fn, get_fit_metrics_aggregation_fn
-
-
-def get_group(cid: int, group_split: List[int]) -> str:
-    '''
-    Get the group index for a given client ID based on the group split.
-    '''
-    cid = int(cid)
-    if group_split is None:
-        return "group0"
-
-    if cid < group_split[0]:
-        return "group0"
-    
-    for i in range(1, len(group_split)):
-        if group_split[i-1] <= cid < group_split[i]:
-            return f"group{i}"
-    
-    raise ValueError(f"Client ID {cid} does not belong to any group in the split {group_split}.")
-    return "group0"
+#from modules.federated.strategies.utils import get_evaluate_fn, get_fit_metrics_aggregation_fn
+from modules.federated.utils import get_weights, set_weights
 
 class MoreClusterAvg(Strategy):
     def __init__(
@@ -82,8 +65,8 @@ class MoreClusterAvg(Strategy):
         base_params = [val.cpu().numpy() for val in state_dict.values()]
         # This list will tell if the layer is a group layer or not
         self.is_group_layer = []
+        print("You selected the following as group layers:")
         for l in range(len(base_params)):
-            print("You selected the following as group layers:")
             if l in self.param_split or l<self.param_split[0] or l>=self.param_split[-1]:
                 self.is_group_layer.append(True)
                 print(f"{l} -> {list(state_dict.keys())[l]}")
@@ -93,36 +76,15 @@ class MoreClusterAvg(Strategy):
         self.weighted_loss = weighted_loss
         self.writer = writer
         self.save_path = save_path
-        self.group_param = { f"group{i}": {} for i in range(len(self.group_split)) }
-        if self.param_split[0] > 0:
-            for group in self.group_param.keys():
-                self.group_param[group]["start"] = []
-        else:
-            for group in self.group_param.keys():
-                self.group_param[group]["start"] = None
-        if self.param_split[-1] < len(base_params):
-            for group in self.group_param.keys():
-                self.group_param[group]["end"] = []
-        else:
-            for group in self.group_param.keys():
-                self.group_param[group]["end"] = None
+        self.group_param = { f"group{i}": [] for i in range(len(self.group_split)) }
         self.best_loss = { f"group{i}": np.inf for i in range(len(self.group_split)) }
+        
         if initial_parameters is not None:
-            self.initial_param = initial_parameters
-            self.global_param = []
-            for l in range(len(self.is_group_layer)):
-                if self.is_group_layer[l]:
-                    # If this is a group layer, save it in the groups parameters
-                    for group in self.group_param.keys():
-                        if l < self.param_split[0]:
-                            self.group_param[group]["start"].append(initial_parameters[l])
-                        elif l >= self.param_split[-1]:
-                            self.group_param[group]["end"].append(initial_parameters[l])
-                        else:
-                            self.group_param[group][l] = initial_parameters[l] 
-                else:
-                    # If this is not a group layer, save it in the global parameters
-                    self.global_param.append(initial_parameters[l])
+            for group in self.group_param.keys():
+                self.global_param, self.group_param[group] = self.split_model(initial_parameters)
+            self.global_param = ndarrays_to_parameters(self.global_param)
+            for group in self.group_param.keys():
+                self.group_param[group] = ndarrays_to_parameters(self.group_param[group])
         else:
             self.global_param = None
 
@@ -149,45 +111,16 @@ class MoreClusterAvg(Strategy):
         if self.global_param is None:
             base_model = EfficientNetModel()
             state_dict = base_model.model.state_dict()
-            base_params = [val.cpu().numpy() for val in state_dict.values()]
-            if self.param_split[0] > 0:
-                # Take the first part as group parameters
-                for g in range(len(self.group_split)):
-                    group = f"group{g}"
-                    self.group_param[group]["start"] = base_params[:self.param_split[0]]
-            else:
-                # If no end part, just take the last layer as group parameters
-                for g in range(len(self.group_split)):
-                    group = f"group{g}"
-                    self.group_param[group]["start"] = None
-            
-            if self.param_split[-1] < len(base_params):
-                # Take the last part as group parameters
-                for g in range(len(self.group_split)):
-                    group = f"group{g}"
-                    self.group_param[group]["end"] = base_params[self.param_split[-1]:]
-            else:
-                # If no end part, just take the last layer as group parameters
-                for g in range(len(self.group_split)):
-                    group = f"group{g}"
-                    self.group_param[group]["end"] = None
-            
-            # The other are indexes of layers to take as group parameters
-            start = max(0, self.param_split[0])
-            end = min(len(base_params), self.param_split[-1])
-            params = []
-            for l in range(start, end):
-                if l in self.param_split[1:-1]:
-                    for g in range(len(self.group_split)):
-                        group = f"group{g}"
-                        self.group_param[group][l] = base_params[l]
-                else:
-                    params.append(base_params[l])
+            initial_parameters = [val.cpu().numpy() for val in state_dict.values()]
+            for group in self.group_param.keys():
+                self.global_param, self.group_param[group] = self.split_model(initial_parameters)
+            self.global_param = ndarrays_to_parameters(self.global_param)
+            for group in self.group_param.keys():
+                self.group_param[group] = ndarrays_to_parameters(self.group_param[group])
 
-            self.global_param = params
-            return ndarrays_to_parameters(base_params)
+            return ndarrays_to_parameters(initial_parameters)
     
-        return ndarrays_to_parameters(self.initial_param)
+        return ndarrays_to_parameters(self.assemble_model("group0"))
         
     def configure_fit(
         self,
@@ -228,14 +161,8 @@ class MoreClusterAvg(Strategy):
         for client in clients:
             properties_res = client.get_properties(ins=GetPropertiesIns(config={}), group_id=0, timeout=30)
             partition_id = int(properties_res.properties["partition_id"])
-            group = get_group(partition_id, self.group_split)
-            global_param = parameters_to_ndarrays(self.global_param)
-            group_param = parameters_to_ndarrays(self.group_param[group])
-            if self.group_at_end:
-                parameters = ndarrays_to_parameters(global_param + group_param)
-            else:
-                parameters = ndarrays_to_parameters(group_param + global_param)
-
+            group = self.get_group(partition_id)
+            parameters = ndarrays_to_parameters(self.assemble_model(group))
             print(f"Group {group[-1]}, partition ID {partition_id}")
             fit_ins = FitIns(parameters, config)
             # INFO FitIns is a tuple of (parameters, config), returned with its client (for each client)
@@ -276,23 +203,19 @@ class MoreClusterAvg(Strategy):
         # Initialize variables to save weights and num_examples
         updates = []
         group_avg = {}
-        clients_trained = {}
         global_avg = [np.zeros_like(layer, dtype=np.float32) for layer in parameters_to_ndarrays(self.global_param)]
 
         # For each client
         for client, fit_res in results:
             # Get the weights, group and number of examples
-            group = get_group(fit_res.metrics["partition_id"], self.group_split)
+            group = self.get_group(fit_res.metrics["partition_id"])
             weights = parameters_to_ndarrays(fit_res.parameters)
             # Save all in a tuple (0->group, 1->weight, 2->num_examples)
             train_data = (group, weights, fit_res.num_examples)
             updates.append(train_data)
             # initialize this group avg to 0
             if group not in group_avg.keys():
-                clients_trained[group] = 0
                 group_avg[group] = [np.zeros_like(layer, dtype=np.float32) for layer in parameters_to_ndarrays(self.group_param[group])]
-
-            clients_trained[group] += 1
         
         # Compute total number of examples (global and per group)
         group_examples = {}
@@ -307,35 +230,28 @@ class MoreClusterAvg(Strategy):
         for group, params, n in updates:
             group_w = n / group_examples[group]
             global_w = group_w * base_w
-            if self.group_at_end:
-                global_update = params[:self.param_split]
-                group_update = params[self.param_split:]
-                for avg, update in zip(global_avg, global_update):
-                    avg += update * global_w
+            global_update, group_update = self.split_model(params)
+            for avg, update in zip(global_avg, global_update):
+                avg += update * global_w
 
-                for avg, update in zip(group_avg[group], group_update):
-                    avg += update * group_w
-            else:
-                group_update = params[:self.param_split]
-                global_update = params[self.param_split:]
-                for avg, update in zip(group_avg[group], group_update):
-                    avg += update * group_w
-
-                for avg, update in zip(global_avg, global_update):
-                    avg += update * global_w
+            for avg, update in zip(group_avg[group], group_update):
+                avg += update * group_w
         
         # If some groups were not trained, their average is considered as unchanged (abstain)
         if len(group_examples) < len(self.group_param):
             old_param = parameters_to_ndarrays(self.global_param)
             for group in self.group_param.keys():
+                # If this group was not trained...
                 if group not in group_examples.keys():
+                    # consider its average as unchanged
                     for avg, old in zip(global_avg, old_param):
                         avg += old * base_w
                     
         # Update old parameters
         self.global_param = ndarrays_to_parameters(global_avg)
-        for k, v in group_avg.items():
-            self.group_param[k] = ndarrays_to_parameters(v)
+        for group in group_avg.keys():
+        for k, v in group_avg[group].items():
+            self.group_param[group][k] = ndarrays_to_parameters(v)
 
         return self.global_param, {}
 
@@ -372,14 +288,8 @@ class MoreClusterAvg(Strategy):
         for client in clients:
             properties_res = client.get_properties(ins=GetPropertiesIns(config={}), group_id=0, timeout=30)
             partition_id = int(properties_res.properties["partition_id"])
-            group = get_group(partition_id, self.group_split)
-            global_param = parameters_to_ndarrays(self.global_param)
-            group_param = parameters_to_ndarrays(self.group_param[group])
-            if self.group_at_end:
-                parameters = ndarrays_to_parameters(global_param + group_param)
-            else:
-                parameters = ndarrays_to_parameters(group_param + global_param)
-
+            group = self.get_group(partition_id)
+            parameters = ndarrays_to_parameters(self.assemble_model(group))
             evaluate_ins = EvaluateIns(parameters, config)
             # INFO EvaluateIns is a tuple of (parameters, config), returned with its client (for each client)
             tuples.append((client, evaluate_ins))
@@ -419,7 +329,7 @@ class MoreClusterAvg(Strategy):
         global_metrics = { "loss": [], "num_examples": [] }
 
         for client, evaluate_res in results:
-            group = get_group(evaluate_res.metrics["partition_id"], self.group_split)
+            group = self.get_group(evaluate_res.metrics["partition_id"])
         
             # Save group metrics
             groups_metrics[group]["loss"].append(evaluate_res.loss)
@@ -497,13 +407,7 @@ class MoreClusterAvg(Strategy):
             all_results["global"] = { "loss": 0.0, "accuracy": 0.0 }
             i = 0
             for group in self.group_param.keys():
-                global_param = parameters_to_ndarrays(self.global_param)
-                group_param = parameters_to_ndarrays(self.group_param[group])
-                if self.group_at_end:
-                    parameters = global_param + group_param
-                else:
-                    parameters = group_param + global_param
-
+                parameters = self.assemble_model(group)
                 group_loss, group_metric = self.evaluate_fn(server_round=server_round,
                     parameters=parameters,
                     config={},
@@ -523,7 +427,6 @@ class MoreClusterAvg(Strategy):
                         weight = self.group_split[i] / self.group_split[-1]
                     else:
                         weight = (self.group_split[i] - self.group_split[i-1]) / self.group_split[-1]
-                
                 else:
                     weight = 1 / len(self.group_param)
 
@@ -539,7 +442,68 @@ class MoreClusterAvg(Strategy):
 
         return None
     
-    def save_model(self, server_round: int, name: str="all") -> None:
+    def assemble_model(self, group: str) -> NDArrays:
+        """
+        Assemble the model parameters from the global and group-specific parameters.
+        This method reconstructs the model state dictionary from the current global
+        and group-specific parameters.
+
+        Args:
+            group (str): The group name to assemble the model for. If "all", it assembles
+                the model for all groups.
+
+        Returns:
+            NDArrays: parameters of the model as array.
+        """
+        if group not in self.group_param.keys():
+            raise ValueError(f"Group {group} not found in {list(self.group_param.keys())}.")
+            return None
+        
+        param = []
+        global_param = parameters_to_ndarrays(self.global_param)
+        group_param = parameters_to_ndarrays(self.group_param[group])
+        c = 0
+        g = 0
+        for l in range(len(self.is_group_layer)):
+            if self.is_group_layer[l]:
+                # If this is a group layer, take it from groups parameters
+                param.append(group_param[g])
+                g += 1
+            else:
+                # If this is not a group layer, take it from global parameters
+                param.append(global_param[c])
+                c += 1
+
+        return param
+
+    def split_model(self, parameters: NDArrays) -> Tuple[NDArrays, NDArrays]:
+        """
+        Split the model parameters into global and group-specific parts.
+        This method separates the provided parameters into global parameters
+        and group-specific parameters based on the defined parameter split.
+
+        Args:
+            parameters (NDArrays): The model parameters to split.
+
+        Returns:
+            Tuple[NDArrays, NDArrays]: A tuple containing global
+                parameters and group-specific parameters.
+        """
+        global_param = []
+        group_param = []
+        
+        for l in range(len(self.is_group_layer)):
+            if self.is_group_layer[l]:
+                # If this is a group layer, save it in the groups parameters
+                group_param.append(parameters[l])
+            else:
+                # If this is not a group layer, save it in the global parameters
+                global_param.append(parameters[l])
+
+        return global_param, group_param
+            
+
+    def save_model(self, server_round: int, group: str="all") -> None:
         """
         Save the current model parameters to disk.
         This method saves the global and group-specific parameters to the specified
@@ -549,42 +513,39 @@ class MoreClusterAvg(Strategy):
             round (int): The current round of federated learning.
         """
         if self.save_path is not None:
-            if name == "all":
-                for i in range(len(self.group_split)):
-                    group = f"group{i}"
-                    group_param = parameters_to_ndarrays(self.group_param[group])
-                    global_param = parameters_to_ndarrays(self.global_param)
-                    if self.group_at_end:
-                        parameters = global_param + group_param
-                    else:
-                        parameters = group_param + global_param
-                
+            if group == "all":
+                for k in self.group_param.keys():
+                    parameters = self.assemble_model(k)
+
                     model = EfficientNetModel()
-                    base_state_dict = model.state_dict()
-                    param_names = list(base_state_dict.keys())
-                    new_state_dict = {}
-                    for name, array in zip(param_names, parameters):
-                        new_state_dict[name] = torch.from_numpy(array)
-
-                    model.load_state_dict(new_state_dict)
-                    torch.save(model.state_dict(), f"{self.save_path}/{group}.pt")
-                    print(f"Model for {group} saved at round {server_round}.")
+                    set_weights(model, parameters)
+                    torch.save(model.state_dict(), f"{self.save_path}/{k}.pt")
+                    print(f"Model for {k} saved at round {server_round}.")
             else:
-                group = name
-                group_param = parameters_to_ndarrays(self.group_param[group])
-                global_param = parameters_to_ndarrays(self.global_param)
-                if self.group_at_end:
-                    parameters = global_param + group_param
-                else:
-                    parameters = group_param + global_param
-             
+                if group not in self.group_param.keys():
+                    raise ValueError(f"Group {group} not found in {list(self.group_param.keys())}.")
+                    return None
+                
+                parameters = self.assemble_model(group)
                 model = EfficientNetModel()
-                base_state_dict = model.state_dict()
-                param_names = list(base_state_dict.keys())
-                new_state_dict = {}
-                for name, array in zip(param_names, parameters):
-                    new_state_dict[name] = torch.from_numpy(array)
-
-                model.load_state_dict(new_state_dict)
+                set_weights(model, parameters)
                 torch.save(model.state_dict(), f"{self.save_path}/{group}.pt")
                 print(f"Model for {group} saved at round {server_round}.")
+
+    def get_group(self, cid: int) -> str:
+        '''
+        Get the group index for a given client ID based on the group split.
+        '''
+        cid = int(cid)
+        if self.group_split is None:
+            return "group0"
+
+        if cid < self.group_split[0]:
+            return "group0"
+    
+        for i in range(1, len(self.group_split)):
+            if self.group_split[i-1] <= cid < self.group_split[i]:
+                return f"group{i}"
+        
+        raise ValueError(f"Client ID {cid} does not belong to any group in the split {self.group_split}.")
+        return "group0"

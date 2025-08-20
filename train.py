@@ -153,7 +153,7 @@ def main():
     loss_fn = torch.nn.CrossEntropyLoss()
     #raise Exception("Stopped")
 
-    logdir = "output/ClusterAvg/start2-nonorm-abstain"
+    logdir = "output/ClusterAvg/start2-nonorm-inertia"
     os.makedirs(logdir, exist_ok=True)
     server_writer = SummaryWriter(log_dir=logdir)
 
@@ -187,10 +187,10 @@ def main():
 #        strategy=strategies.MyFedAvg(
 #            save_path=logdir,
 #            fraction_fit=0.00001,
-#            fraction_evaluate=1, 
-#            min_fit_clients=5, 
+#            fraction_evaluate=1,
+#            min_fit_clients=5,
 #            #min_evaluate_clients=10,
-#            min_available_clients=10, 
+#            min_available_clients=10,
 #            on_fit_config_fn=strategies.get_on_fit_config({"local_epochs": 5}),
 #            #on_evaluate_config_fn=strategies.get_on_evaluate_config({"batch_size": 32}),
 #            fit_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn(),
@@ -226,7 +226,7 @@ def main():
             evaluate_fn=evaluate_f,
             initial_parameters=start_parameters
         ),
-        num_rounds=50,
+        num_rounds=100,
         log_every=1,
     )
 
