@@ -249,9 +249,8 @@ class MoreClusterAvg(Strategy):
                     
         # Update old parameters
         self.global_param = ndarrays_to_parameters(global_avg)
-        for group in group_avg.keys():
-        for k, v in group_avg[group].items():
-            self.group_param[group][k] = ndarrays_to_parameters(v)
+        for k, v in group_avg.items():
+            self.group_param[k] = ndarrays_to_parameters(v)
 
         return self.global_param, {}
 

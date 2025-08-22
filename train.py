@@ -44,7 +44,7 @@ def main():
     unique_paths_contactNonPolarized, unique_labels_contactNonPolarized = loader.extract_image_paths_and_labels(contactPolarized=False, contactNonPolarized=True, nonContactPolarized=False)
     unique_paths_nonContactPolarized, unique_labels_nonContactPolarized = loader.extract_image_paths_and_labels(contactPolarized=False, contactNonPolarized=False, nonContactPolarized=True)
 
-    data_module_contactPolarized = SkinLesionDataModule(unique_paths_contactPolarized, unique_labels_contactPolarized, batch_size=32, augm=True, selec_augm=False)
+    data_module_contactPolarized = SkinLesionDataModule(unique_paths_contactPolarized, unique_labels_contactPolarized, batch_size=32, augm=False, selec_augm=False)
     data_module_contactNonPolarized = SkinLesionDataModule(unique_paths_contactNonPolarized, unique_labels_contactNonPolarized, batch_size=32, augm=True, selec_augm=False)
     data_module_nonContactPolarized = SkinLesionDataModule(unique_paths_nonContactPolarized, unique_labels_nonContactPolarized, batch_size=32, augm=True, selec_augm=False)
 
@@ -153,7 +153,7 @@ def main():
     loss_fn = torch.nn.CrossEntropyLoss()
     #raise Exception("Stopped")
 
-    logdir = "output/ClusterAvg/start2-nonorm-inertia"
+    logdir = "output/ClusterAvg/start2-noaugm-inertia"
     os.makedirs(logdir, exist_ok=True)
     server_writer = SummaryWriter(log_dir=logdir)
 
