@@ -224,12 +224,13 @@ class MyFedAvg(Strategy):
         if self.save_path is not None:
             parameters = parameters_to_ndarrays(self.parameters) 
             model = EfficientNetModel()
-            base_state_dict = model.state_dict()
-            param_names = list(base_state_dict.keys())
-            new_state_dict = {}
-            for name, array in zip(param_names, parameters):
-                new_state_dict[name] = torch.from_numpy(array)
+            set_weights(model, parameters)
+            #base_state_dict = model.state_dict()
+            #param_names = list(base_state_dict.keys())
+            #new_state_dict = {}
+            #for name, array in zip(param_names, parameters):
+            #    new_state_dict[name] = torch.from_numpy(array)
 
-            model.load_state_dict(new_state_dict)
+            #model.load_state_dict(new_state_dict)
             torch.save(model.state_dict(), f"{self.save_path}/model.pt")
             print(f"Model saved at round {server_round}.")

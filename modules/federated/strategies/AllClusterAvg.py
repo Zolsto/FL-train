@@ -467,7 +467,7 @@ class AllClusterAvg(Strategy):
 
                 if group_loss<self.best_loss[group]:
                     self.best_loss[group] = group_loss
-                    self.save_model(server_round=server_round, name=group)
+                    self.save_model(server_round=server_round, group=group)
                     
                 # Weighted average for global results
                 if self.weighted_loss:
@@ -491,7 +491,7 @@ class AllClusterAvg(Strategy):
 
         return None
     
-    def save_model(self, server_round: int, name: str="all") -> None:
+    def save_model(self, server_round: int, group: str="all") -> None:
         """
         Save the current model parameters to disk.
         This method saves the global and group-specific parameters to the specified
@@ -501,29 +501,10 @@ class AllClusterAvg(Strategy):
             round (int): The current round of federated learning.
         """
         if self.save_path is not None:
-            if name == "all":
-                for i in range(len(self.group_split)):
-                    group = f"group{i}"
-                    group_param = parameters_to_ndarrays(self.group_param[group])
-                    global_param = parameters_to_ndarrays(self.global_param)
-                    if self.group_at_end:
-                        parameters = global_param + group_param
-                    else:
-                        parameters = group_param + global_param
-                
-                    model = EfficientNetModel()
-                    set_weights(model, parameters)
-                    #base_state_dict = model.state_dict()
-                    #param_names = list(base_state_dict.keys())
-                    #new_state_dict = {}
-                    #for name, array in zip(param_names, parameters):
-                    #    new_state_dict[name] = torch.from_numpy(array)
-
-                    #model.load_state_dict(new_state_dict)
-                    torch.save(model.state_dict(), f"{self.save_path}/{group}.pt")
-                    print(f"Model for {group} saved at round {server_round}.")
+            if group == "all":
+                for group in self.group_param.keys():
+                    self.save_model(server_round=server_round, group=group)
             else:
-                group = name
                 group_param = parameters_to_ndarrays(self.group_param[group])
                 global_param = parameters_to_ndarrays(self.global_param)
                 if self.group_at_end:

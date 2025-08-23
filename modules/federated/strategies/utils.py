@@ -284,7 +284,7 @@ def get_evaluate_fn(
 
     # Define the evaluation function
     def evaluate_fn(
-        server_round: int,  # pylint: disable=unused-argument
+        server_round: int,
         parameters: NDArrays,
         config: Dict[str, Scalar],  # pylint: disable=unused-argument
         name: str="global",

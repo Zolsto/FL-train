@@ -514,17 +514,8 @@ class MoreClusterAvg(Strategy):
         if self.save_path is not None:
             if group == "all":
                 for k in self.group_param.keys():
-                    parameters = self.assemble_model(k)
-
-                    model = EfficientNetModel()
-                    set_weights(model, parameters)
-                    torch.save(model.state_dict(), f"{self.save_path}/{k}.pt")
-                    print(f"Model for {k} saved at round {server_round}.")
-            else:
-                if group not in self.group_param.keys():
-                    raise ValueError(f"Group {group} not found in {list(self.group_param.keys())}.")
-                    return None
-                
+                    self.save_model(server_round=server_round, group=k)
+            else:        
                 parameters = self.assemble_model(group)
                 model = EfficientNetModel()
                 set_weights(model, parameters)
