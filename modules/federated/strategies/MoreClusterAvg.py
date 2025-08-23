@@ -30,22 +30,25 @@ class MoreClusterAvg(Strategy):
         # [0, index1, ..., indexN, num_clients]
         # group1 IDs (index1 --> index2 - 1), N+1 groups (last is groupN)
         group_split: List[int],
-        # list of group layers in this form:
-        # [layers_at_start, index, ..., index, layers_at_end]
-        param_split: List[int],
+        # list of layers: True -> group, False -> global
+        param_split: List[bool],
         fraction_fit: float = 1.0,
         fraction_evaluate: float = 1.0,
         min_fit_clients: int = 2,
         min_evaluate_clients: int = 2,
         min_available_clients: int = 2,
+        # Whether to weight loss of a group by its size
         weighted_loss: bool = True,
+        # Whether to test a group only on its own test set
         separate_eval: bool = True,
         on_fit_config_fn: Optional[Callable] = None,
         fit_metrics_aggregation_fn: Optional[Callable] = None,
         on_evaluate_config_fn: Optional[Callable] = None,
         evaluate_fn: Optional[Callable] = None,
-        initial_parameters: Optional[NDArrays] = None,
+        initial_parameters: Optional[Parameters] = None,
+        # TensorBoard writer
         writer: Optional[SummaryWriter] = None,
+        # Path to save the model
         save_path: Optional[str] = None
         ):
         super().__init__()
@@ -60,19 +63,6 @@ class MoreClusterAvg(Strategy):
         self.separate_eval = separate_eval
         self.group_split = group_split
         self.param_split = param_split
-        base_model = EfficientNetModel()
-        state_dict = base_model.model.state_dict()
-        base_params = [val.cpu().numpy() for val in state_dict.values()]
-        # This list will tell if the layer is a group layer or not
-        self.is_group_layer = []
-        print("You selected the following as group layers:")
-        for l in range(len(base_params)):
-            if l in self.param_split or l<self.param_split[0] or l>=self.param_split[-1]:
-                self.is_group_layer.append(True)
-                print(f"{l} -> {list(state_dict.keys())[l]}")
-            else:
-                self.is_group_layer.append(False)
-
         self.weighted_loss = weighted_loss
         self.writer = writer
         self.save_path = save_path
@@ -418,7 +408,7 @@ class MoreClusterAvg(Strategy):
 
                 if group_loss<self.best_loss[group]:
                     self.best_loss[group] = group_loss
-                    self.save_model(server_round=server_round, name=group)
+                    self.save_model(server_round=server_round, group=group)
                     
                 # Weighted average for global results
                 if self.weighted_loss:
@@ -463,8 +453,8 @@ class MoreClusterAvg(Strategy):
         group_param = parameters_to_ndarrays(self.group_param[group])
         c = 0
         g = 0
-        for l in range(len(self.is_group_layer)):
-            if self.is_group_layer[l]:
+        for l in range(len(self.param_split)):
+            if self.param_split[l]:
                 # If this is a group layer, take it from groups parameters
                 param.append(group_param[g])
                 g += 1
@@ -490,9 +480,11 @@ class MoreClusterAvg(Strategy):
         """
         global_param = []
         group_param = []
-        
-        for l in range(len(self.is_group_layer)):
-            if self.is_group_layer[l]:
+        if isinstance(parameters, Parameters):
+            parameters = parameters_to_ndarrays(parameters)
+
+        for l in range(len(self.param_split)):
+            if self.param_split[l]:
                 # If this is a group layer, save it in the groups parameters
                 group_param.append(parameters[l])
             else:

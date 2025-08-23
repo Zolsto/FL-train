@@ -146,14 +146,21 @@ def main():
 
         if "features.2" in name:
             split_index = i
+
+    split_indexes = []
+    for name in model.state_dict().keys():
+        if "features.0" in name or "features.1" in name or "classifier" in name:
+            split_indexes.append(True)
+        else:
+            split_indexes.append(False)
     
     print(split_index)
     model.to(device)
-    #print(model.named_parameters())
+    print(model.named_parameters())
     loss_fn = torch.nn.CrossEntropyLoss()
     #raise Exception("Stopped")
 
-    logdir = "output/FedAvg/my-norm"
+    logdir = "output/ClusterAvg/s2eC-nonorm-more"
     os.makedirs(logdir, exist_ok=True)
     server_writer = SummaryWriter(log_dir=logdir)
 
@@ -183,52 +190,52 @@ def main():
     )
 
     # FedAvg strategy
+#    fed_trainer.set_client_and_server(
+#        strategy=strategies.MyFedAvg(
+#            save_path=logdir,
+#            fraction_fit=0.00001,
+#            fraction_evaluate=1,
+#            min_fit_clients=5,
+#            #min_evaluate_clients=10,
+#            min_available_clients=10,
+#            on_fit_config_fn=strategies.get_on_fit_config({"local_epochs": 5}),
+#            #on_evaluate_config_fn=strategies.get_on_evaluate_config({"batch_size": 32}),
+#            fit_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn(),
+#            #evaluate_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn()
+#            evaluate_fn=evaluate_f,
+#            initial_parameters=start_parameters
+#        ),
+#        num_rounds=50,
+#        log_every=1,
+#    )
+
+    # Personalized strategy
     fed_trainer.set_client_and_server(
-        strategy=strategies.MyFedAvg(
+        strategy=strategies.MoreClusterAvg(
+            # Parameters of ClusterAvg
+#            group_at_end=False,
+            separate_eval=True,
+            weighted_loss=True,
+            group_split=group_split,
+            writer=server_writer,
+            param_split=split_indexes,
             save_path=logdir,
-            fraction_fit=0.00001,
+            # Parameters like FedAvg
+            fraction_fit=0.00001,   #0.00001
             fraction_evaluate=1,
             min_fit_clients=5,
-            #min_evaluate_clients=10,
+            # min_evaluate_clients=10,
             min_available_clients=10,
             on_fit_config_fn=strategies.get_on_fit_config({"local_epochs": 5}),
-            #on_evaluate_config_fn=strategies.get_on_evaluate_config({"batch_size": 32}),
+            # on_evaluate_config_fn=strategies.get_on_evaluate_config({"batch_size": 32}),
             fit_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn(),
-            #evaluate_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn()
+            # evaluate_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn()
             evaluate_fn=evaluate_f,
             initial_parameters=start_parameters
         ),
         num_rounds=50,
         log_every=1,
     )
-
-    # Personalized strategy
-#    fed_trainer.set_client_and_server(
-#        strategy=strategies.AllClusterAvg(
-#            # Parameters of ClusterAvg
-#            group_at_end=False,
-#            separate_eval=True,
-#            weighted_loss=True,
-#            group_split=group_split,
-#            writer=server_writer,
-#            param_split=split_index,
-#            save_path=logdir,
-#            # Parameters like FedAvg
-#            fraction_fit=0.00001,   #0.00001
-#            fraction_evaluate=1,
-#            min_fit_clients=5,
-#            # min_evaluate_clients=10,
-#            min_available_clients=10,
-#            on_fit_config_fn=strategies.get_on_fit_config({"local_epochs": 5}),
-#            # on_evaluate_config_fn=strategies.get_on_evaluate_config({"batch_size": 32}),
-#            fit_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn(),
-#            # evaluate_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn()
-#            evaluate_fn=evaluate_f,
-#            initial_parameters=start_parameters
-#        ),
-#        num_rounds=100,
-#        log_every=1,
-#    )
 
     fed_trainer(num_clients=80)
     server_writer.close()
