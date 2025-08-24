@@ -1,3 +1,7 @@
+import flwr
+import torch
+import numpy as np
+
 from flwr.server.strategy import Strategy
 from flwr.common import (
     FitRes,
@@ -14,48 +18,38 @@ from flwr.common import (
 from typing import List, Optional, Tuple, Dict, Callable, Union
 from flwr.server.client_proxy import ClientProxy
 from flwr.server.client_manager import ClientManager
-import numpy as np
-import flwr
 from modules.federated.efficientnet import EfficientNetModel
 from torch.utils.tensorboard import SummaryWriter
-from modules.federated.strategies.utils import get_evaluate_fn, get_fit_metrics_aggregation_fn
+#from modules.federated.strategies.utils import get_evaluate_fn, get_fit_metrics_aggregation_fn
+from modules.federated.utils import get_weights, set_weights
 
-
-def get_group(cid, group_split: List[int]) -> str:
-    '''
-    Get the group index for a given client ID based on the group split.
-    '''
-    cid = int(cid)
-    if group_split is None:
-        return "group0"
-
-    if cid < group_split[0]:
-        return "group0"
-    
-    for i in range(1, len(group_split)):
-        if group_split[i-1] <= cid < group_split[i]:
-            return f"group{i}"
-    
-    raise ValueError(f"Client ID {cid} does not belong to any group in the split {group_split}.")
-    return "group0"
-
-class ClusterAvg(Strategy):
+class MoreClusterAvg(Strategy):
     def __init__(
         self,
+        # list of partition IDs at the start of each group
+        # [0, index1, ..., indexN, num_clients]
+        # group1 IDs (index1 --> index2 - 1), N+1 groups (last is groupN)
         group_split: List[int],
-        param_split: int,
+        # list of layers: True -> group, False -> global
+        param_split: List[bool],
         fraction_fit: float = 1.0,
         fraction_evaluate: float = 1.0,
         min_fit_clients: int = 2,
         min_evaluate_clients: int = 2,
         min_available_clients: int = 2,
-        weighted_loss: bool = False,
+        # Whether to weight loss of a group by its size
+        weighted_loss: bool = True,
+        # Whether to test a group only on its own test set
+        separate_eval: bool = True,
         on_fit_config_fn: Optional[Callable] = None,
         fit_metrics_aggregation_fn: Optional[Callable] = None,
         on_evaluate_config_fn: Optional[Callable] = None,
         evaluate_fn: Optional[Callable] = None,
         initial_parameters: Optional[Parameters] = None,
+        # TensorBoard writer
         writer: Optional[SummaryWriter] = None,
+        # Path to save the model
+        save_path: Optional[str] = None
         ):
         super().__init__()
         self.fraction_fit = fraction_fit
@@ -64,27 +58,25 @@ class ClusterAvg(Strategy):
         self.min_evaluate_clients = min_evaluate_clients
         self.min_available_clients = min_available_clients
         self.on_fit_config_fn = on_fit_config_fn
-        self.fit_metrics_aggregation_fn = fit_metrics_aggregation_fn
-        if self.fit_metrics_aggregation_fn is None:
-            self.fit_metrics_aggregation_fn = get_fit_metrics_aggregation_fn
         self.on_evaluate_config_fn = on_evaluate_config_fn
         self.evaluate_fn = evaluate_fn
-        if self.evaluate_fn is None:
-            self.evaluate_fn = get_evaluate_fn()
+        self.separate_eval = separate_eval
         self.group_split = group_split
         self.param_split = param_split
         self.weighted_loss = weighted_loss
         self.writer = writer
+        self.save_path = save_path
+        self.group_param = { f"group{i}": [] for i in range(len(self.group_split)) }
+        self.best_loss = { f"group{i}": np.inf for i in range(len(self.group_split)) }
+        
         if initial_parameters is not None:
-            tensors = parameters_to_ndarrays(initial_parameters)
-            self.global_param = ndarrays_to_parameters(tensors[:self.param_split])
-            linear_initial = ndarrays_to_parameters(tensors[self.param_split:])
-            self.group_param = {}
-            for i in range(len(self.group_split)):
-                self.group_param[f"group{i}"] = linear_initial
+            for group in self.group_param.keys():
+                self.global_param, self.group_param[group] = self.split_model(initial_parameters)
+            self.global_param = ndarrays_to_parameters(self.global_param)
+            for group in self.group_param.keys():
+                self.group_param[group] = ndarrays_to_parameters(self.group_param[group])
         else:
             self.global_param = None
-            self.group_param = { f"group{i}": None for i in range(len(self.group_split)) }
 
 
     def initialize_parameters(
@@ -94,25 +86,31 @@ class ClusterAvg(Strategy):
         # attributes: clients (Dict[str, ClientProxy])
         # methods: register, unregister, all, wait_for, sample, num_available
         ) -> Optional[Parameters]:
-        '''
-        Initialize the server parameters.
-        '''
-        
+        """
+        Initializes the global model parameters.
+        If no initial parameters are provided, a new model is instantiated and
+        its weights are used to initialize the global and group-specific parameters.
+
+        Args:
+            client_manager (ClientManager): The client manager.
+
+        Returns:
+            Optional[Parameters]: The initial model parameters to be sent to the clients.
+        """
         # If no initial parameters are given, use base model to initialize
         if self.global_param is None:
             base_model = EfficientNetModel()
             state_dict = base_model.model.state_dict()
-            all_parameters = [val.cpu().numpy() for val in state_dict.values()]
-            self.global_param = ndarrays_to_parameters(all_parameters[:self.param_split])
-            for k, v in self.group_param.items():
-                if v is None:
-                    self.group_param[k] = ndarrays_to_parameters(all_parameters[self.param_split:])
-            return ndarrays_to_parameters(all_parameters)
-            
-        global_param = parameters_to_ndarrays(self.global_param)
-        group_param = parameters_to_ndarrays(self.group_param["group0"])
-        all_parameters = global_param + group_param
-        return ndarrays_to_parameters(all_parameters)
+            initial_parameters = [val.cpu().numpy() for val in state_dict.values()]
+            for group in self.group_param.keys():
+                self.global_param, self.group_param[group] = self.split_model(initial_parameters)
+            self.global_param = ndarrays_to_parameters(self.global_param)
+            for group in self.group_param.keys():
+                self.group_param[group] = ndarrays_to_parameters(self.group_param[group])
+
+            return ndarrays_to_parameters(initial_parameters)
+    
+        return ndarrays_to_parameters(self.assemble_model("group0"))
         
     def configure_fit(
         self,
@@ -123,9 +121,22 @@ class ClusterAvg(Strategy):
         # methods: to_ndarrays, from_ndarrays (mostly conversion)
         client_manager: ClientManager
         ) -> List[Tuple[ClientProxy, FitIns]]:
-        '''
-        Select clients and prepare fit (training) instructions.
-        '''
+        """
+        Configures the training instructions for a round.
+        This method samples clients and constructs a personalized model for each
+        by combining the current global parameters with the client's specific
+        group parameters.
+
+        Args:
+            server_round (int): The current round of federated learning.
+            parameters (Parameters): The current global model parameters.
+            client_manager (ClientManager): The client manager.
+
+        Returns:
+            List[Tuple[ClientProxy, FitIns]]: A list of tuples, where each tuple
+                contains a client proxy and the training instructions (FitIns)
+                for that client.
+        """
 
         # Select clients to fit
         num_available = client_manager.num_available()
@@ -138,21 +149,15 @@ class ClusterAvg(Strategy):
         tuples = []
         print(f"In round {server_round} selected {len(clients)} clients for fitting:")
         for client in clients:
-            #group = get_group(self.id_to_group[client.cid], self.group_split)
-            if self.global_param:
-                properties_res = client.get_properties(ins=GetPropertiesIns(config={}), group_id=0, timeout=30)
-                partition_id = int(properties_res.properties["partition_id"])
-                group = get_group(partition_id, self.group_split)
-                global_param = parameters_to_ndarrays(self.global_param)
-                group_param = parameters_to_ndarrays(self.group_param[group])
-                parameters = global_param + group_param
-                parameters = ndarrays_to_parameters(parameters)
-                print(f"Group {group[-1]}, partition ID {partition_id}")
-            else:
-                parameters = None
+            properties_res = client.get_properties(ins=GetPropertiesIns(config={}), group_id=0, timeout=30)
+            partition_id = int(properties_res.properties["partition_id"])
+            group = self.get_group(partition_id)
+            parameters = ndarrays_to_parameters(self.assemble_model(group))
+            print(f"Group {group[-1]}, partition ID {partition_id}")
             fit_ins = FitIns(parameters, config)
             # INFO FitIns is a tuple of (parameters, config), returned with its client (for each client)
             tuples.append((client, fit_ins))
+
         print()
         return tuples
 
@@ -160,83 +165,83 @@ class ClusterAvg(Strategy):
         self,
         server_round: int,
         results: List[Tuple[ClientProxy, FitRes]],
+        # INFO: FitRes is used to bring result from training
+        # attributes: parameters (trained weights of the client), num_examples (training examples of the client), num_examples_ceil, fit_duration
         failures: List[Union[Tuple[ClientProxy, FitRes], BaseException]],
     ) -> Tuple[Optional[Parameters], Dict[str, Scalar]]:
+        """
+        Aggregates the training results from clients.
+        This method separates the client updates into global and group-specific
+        parts and aggregates them accordingly. The global part is averaged
+        across all clients (with a fairness adjustment), while the group-specific
+        parts are averaged only within their respective groups.
+
+        Args:
+            server_round (int): The current round of federated learning.
+            results (List[Tuple[ClientProxy, FitRes]]): The successful results
+                from the clients.
+            failures (List[Union[Tuple[ClientProxy, FitRes], BaseException]]): The
+                failures from the clients.
+
+        Returns:
+            Tuple[Optional[Parameters], Dict[str, Scalar]]: The updated global
+                parameters and a metrics dictionary.
+        """
         if not results:
             return None, {}
     
-        # Extract weights and number of examples of each clients
-        conv_updates = []
-        group_updates = {}
-        group_examples = {}
-        num_examples = []
-
-        base_params = parameters_to_ndarrays(results[0][1].parameters)
-        global_avg = []
+        # Initialize variables to save weights and num_examples
+        updates = []
         group_avg = {}
-        g = {}
+        global_avg = [np.zeros_like(layer, dtype=np.float32) for layer in parameters_to_ndarrays(self.global_param)]
 
         # For each client
         for client, fit_res in results:
             # Get the weights, group and number of examples
+            group = self.get_group(fit_res.metrics["partition_id"])
             weights = parameters_to_ndarrays(fit_res.parameters)
-            group = get_group(fit_res.metrics["partition_id"], self.group_split)
-            conv_updates.append(weights[:self.param_split])
-            if group not in group_updates:
-                group_updates[group] = []
-                group_avg[group] = [np.zeros_like(layer, dtype=np.float32) for layer in base_params[self.param_split:]]
-                g[group] = 0
-
-            group_updates[group].append(weights[self.param_split:])
-            if group not in group_examples:
-                group_examples[group] = 0
-
-            group_examples[group] += fit_res.num_examples
-            num_examples.append(fit_res.num_examples)
+            # Save all in a tuple (0->group, 1->weight, 2->num_examples)
+            train_data = (group, weights, fit_res.num_examples)
+            updates.append(train_data)
+            # initialize this group avg to 0
+            if group not in group_avg.keys():
+                group_avg[group] = [np.zeros_like(layer, dtype=np.float32) for layer in parameters_to_ndarrays(self.group_param[group])]
         
-        total_examples = np.sum(num_examples)
-
-        # Initialize averages to 0 (shape is taken form 1st client parameters)
-        for layer in base_params[:self.param_split]:
-            global_avg.append(np.zeros_like(layer, dtype=np.float32))
+        # Compute total number of examples (global and per group)
+        group_examples = {}
+        total_examples = 0
+        for k in group_avg.keys():
+            g_list = [item[2] for item in updates if item[0]==k]
+            group_examples[k] = np.sum(g_list)
+            total_examples += group_examples[k]
         
-        #group_avg = {}
-        #for k in group_updates.keys():
-        #    group_avg[k] = [np.zeros_like(layer, dtype=np.float32) for layer in base_params[self.param_split:]]
-        # Aggregate global and local parameters
-        c = 0
-        for client, fit_res in results:
-            group = get_group(fit_res.metrics["partition_id"], self.group_split)
-            
-            # Global updates are weighted equally across all clients: more clients, less weight
-            global_weight = num_examples[c] / total_examples
-            i = int(group[-1])
-            if i==0:
-                global_weight = global_weight / self.group_split[i]
-            else:
-                global_weight = global_weight / (self.group_split[i] - self.group_split[i-1])
+        # Compute global avg and per group avg (only on group present in training)
+        base_w = 1 / len(self.group_param)
+        for group, params, n in updates:
+            group_w = n / group_examples[group]
+            global_w = group_w * base_w
+            global_update, group_update = self.split_model(params)
+            for avg, update in zip(global_avg, global_update):
+                avg += update * global_w
 
-            for layer in range(len(conv_updates[0])):
-                global_avg[layer] += conv_updates[c][layer] * global_weight
-
-            # Local updates are weighted by the number of examples in the group
-            local_weight = num_examples[c] / group_examples[group]
-            for layer in range(len(group_updates[group][0])):
-                group_avg[group][layer] += group_updates[group][g[group]][layer] * local_weight
-            
-            g[group] += 1
-            c += 1
+            for avg, update in zip(group_avg[group], group_update):
+                avg += update * group_w
         
+        # If some groups were not trained, their average is considered as unchanged (abstain)
+        if len(group_examples) < len(self.group_param):
+            old_param = parameters_to_ndarrays(self.global_param)
+            for group in self.group_param.keys():
+                # If this group was not trained...
+                if group not in group_examples.keys():
+                    # consider its average as unchanged
+                    for avg, old in zip(global_avg, old_param):
+                        avg += old * base_w
+                    
         # Update old parameters
         self.global_param = ndarrays_to_parameters(global_avg)
+        for k, v in group_avg.items():
+            self.group_param[k] = ndarrays_to_parameters(v)
 
-        for k in group_avg.keys():
-            self.group_param[k] = ndarrays_to_parameters(group_avg[k])
-
-        conv = parameters_to_ndarrays(self.global_param)
-        linear = parameters_to_ndarrays(self.group_param['group0'])
-        new_parameters = ndarrays_to_parameters(conv + linear)
-        #self.parameters = new_parameters
         return self.global_param, {}
 
     def configure_evaluate(
@@ -245,9 +250,21 @@ class ClusterAvg(Strategy):
         parameters: Parameters,
         client_manager: ClientManager
         ) -> List[Tuple[ClientProxy, EvaluateIns]]:
-        '''
-        Select clients and prepare evaluation instructions.
-        '''
+        """
+        Configures the evaluation instructions for a round.
+        Similar to `configure_fit`, this method constructs a personalized model
+        for each client before sending evaluation instructions.
+
+        Args:
+            server_round (int): The current round of federated learning.
+            parameters (Parameters): The current global model parameters.
+            client_manager (ClientManager): The client manager.
+
+        Returns:
+            List[Tuple[ClientProxy, EvaluateIns]]: A list of tuples, where each tuple
+                contains a client proxy and the evaluation instructions (EvaluateIns)
+                for that client.
+        """
 
         # Select clients to fit
         num_available = client_manager.num_available()
@@ -258,18 +275,10 @@ class ClusterAvg(Strategy):
         config = self.on_evaluate_config_fn(server_round) if self.on_evaluate_config_fn else {}
         tuples = []
         for client in clients:
-            #group = get_group(self.id_to_group[client.cid], self.group_split)
-            if self.global_param:
-                properties_res = client.get_properties(ins=GetPropertiesIns(config={}), group_id=0, timeout=30)
-                partition_id = int(properties_res.properties["partition_id"])
-                group = get_group(partition_id, self.group_split)
-                global_param = parameters_to_ndarrays(self.global_param)
-                group_param = parameters_to_ndarrays(self.group_param[group])
-                parameters = global_param + group_param
-                parameters = ndarrays_to_parameters(parameters)
-            else:
-                parameters = None
-
+            properties_res = client.get_properties(ins=GetPropertiesIns(config={}), group_id=0, timeout=30)
+            partition_id = int(properties_res.properties["partition_id"])
+            group = self.get_group(partition_id)
+            parameters = ndarrays_to_parameters(self.assemble_model(group))
             evaluate_ins = EvaluateIns(parameters, config)
             # INFO EvaluateIns is a tuple of (parameters, config), returned with its client (for each client)
             tuples.append((client, evaluate_ins))
@@ -280,21 +289,36 @@ class ClusterAvg(Strategy):
         self,
         server_round: int,
         results: List[Tuple[ClientProxy, EvaluateRes]],
+        # INFO: EvaluateRes is similar to FitRes, but for reporting test sessions
+        # attributes: num_examples, loss, metrics (dict for other metrics)
         failures: List[Union[Tuple[ClientProxy, FitRes], BaseException]]
         ) -> Tuple[Optional[float], Dict[str, Scalar]]:
-        '''
-        Aggregate evaluation results (weighted average).
-        '''
+        """
+        Aggregates the evaluation results from clients.
+        Calculates the weighted average loss and metrics for each group and
+        for all clients combined.
+
+        Args:
+            server_round (int): The current round of federated learning.
+            results (List[Tuple[ClientProxy, EvaluateRes]]): The successful
+                evaluation results from the clients.
+            failures (List[Union[Tuple[ClientProxy, FitRes], BaseException]]): The
+                failures from the clients.
+
+        Returns:
+            Tuple[Optional[float], Dict[str, Scalar]]: A tuple containing the
+                centralized loss and a dictionary of aggregated metrics.
+        """
 
         if not results:
             return None, {}
 
-        groups_metrics = { k : { "loss": [], "num_examples": [], "metrics": {} } for k in self.group_param.keys() }
+        groups_metrics = { k : { "loss": [], "num_examples": [] } for k in self.group_param.keys() }
 
-        global_metrics = { "loss": [], "num_examples": [], "metrics": {} }
+        global_metrics = { "loss": [], "num_examples": [] }
 
         for client, evaluate_res in results:
-            group = get_group(evaluate_res.metrics["partition_id"], self.group_split)
+            group = self.get_group(evaluate_res.metrics["partition_id"])
         
             # Save group metrics
             groups_metrics[group]["loss"].append(evaluate_res.loss)
@@ -306,52 +330,64 @@ class ClusterAvg(Strategy):
         
             # Add other metrics if present
             for metric_name, metric_value in evaluate_res.metrics.items():
-                if metric_name not in groups_metrics[group]["metrics"].keys():
-                    groups_metrics[group]["metrics"][metric_name] = []
+                if metric_name not in groups_metrics[group].keys():
+                    groups_metrics[group][metric_name] = []
 
-                if metric_name not in global_metrics["metrics"].keys():
-                    global_metrics["metrics"][metric_name] = []
+                if metric_name not in global_metrics.keys():
+                    global_metrics[metric_name] = []
 
-                groups_metrics[group]["metrics"][metric_name].append(metric_value)
-                global_metrics["metrics"][metric_name].append(metric_value)
+                groups_metrics[group][metric_name].append(metric_value)
+                global_metrics[metric_name].append(metric_value)
             
         # Aggregate all metrics
         aggregated_metrics = {}
-        global_loss = np.average(global_metrics["loss"], weights=global_metrics["num_examples"])
-        aggregated_metrics["global_loss"] = global_loss
-        aggregated_metrics["global_examples"] = np.sum(global_metrics["num_examples"])
-        for k, v in global_metrics["metrics"].items():
-            weighted_avg = np.average(v, weights=global_metrics["num_examples"])
+        for k, v in global_metrics.items():
+            if k=="num_examples":
+                weighted_avg = np.sum(v)
+            else:
+                weighted_avg = np.average(v, weights=global_metrics["num_examples"])
+
             aggregated_metrics[f"global_{k}"] = weighted_avg
             
         for group_name, group_data in groups_metrics.items():
             group_examples = np.sum(group_data["num_examples"])
             if group_examples > 0:
-                # Group loss (weighted average)
-                group_loss = np.average(group_data["loss"], weights=group_data["num_examples"])
-                aggregated_metrics[f"{group_name}_loss"] = group_loss
-                aggregated_metrics[f"{group_name}_examples"] = group_examples
-            
-                # Other metrics of the group (weighted average)
-                for metric_name, metric_values in group_data["metrics"].items():
-                    weighted_avg = np.average(metric_values, weights=group_data["num_examples"])
+                # Metrics of the group (weighted average)
+                for metric_name, metric_values in group_data.items():
+                    if metric_name=="num_examples":
+                        weighted_avg = group_examples
+                    else:
+                        weighted_avg = np.average(metric_values, weights=group_data["num_examples"])
+
                     aggregated_metrics[f"{group_name}_{metric_name}"] = weighted_avg
             else:
-                aggregated_metrics[f"{group_name}_loss"] = 0
-                aggregated_metrics[f"{group_name}_examples"] = 0
-                for metric in group_data["metrics"].keys():
+                for metric in group_data.keys():
                     aggregated_metrics[f"{group_name}_{metric}"] = 0
 
-        return global_loss, aggregated_metrics
+        if self.fraction_evaluate == 0:
+            self.save_model(server_round)
+
+        return aggregated_metrics["global_loss"], aggregated_metrics
 
     def evaluate(
         self,
         server_round: int,
         parameters: Parameters
         ) -> Optional[Tuple[float, Dict[str, Scalar]]]:
-        '''
-        Evaluate the model on the server.
-        '''
+        """
+        Performs a centralized evaluation on the server-side.
+        This method iterates through each client group, reconstructs the
+        appropriate model for that group, and runs evaluation using the
+        provided `evaluate_fn`.
+
+        Args:
+            server_round (int): The current round of federated learning.
+            parameters (Parameters): The current global model parameters.
+
+        Returns:
+            Optional[Tuple[float, Dict[str, Scalar]]]: A tuple containing the
+                globally aggregated loss and a dictionary of all detailed metrics.
+        """
 
         # Optional server evaluation
         if self.evaluate_fn is not None:
@@ -360,13 +396,19 @@ class ClusterAvg(Strategy):
             all_results["global"] = { "loss": 0.0, "accuracy": 0.0 }
             i = 0
             for group in self.group_param.keys():
-                global_param = parameters_to_ndarrays(self.global_param)
-                group_param = parameters_to_ndarrays(self.group_param[group])
-                parameters = global_param + group_param
-                group_loss, group_metric = self.evaluate_fn(server_round=server_round, parameters=parameters, config={}, name=group)
+                parameters = self.assemble_model(group)
+                group_loss, group_metric = self.evaluate_fn(server_round=server_round,
+                    parameters=parameters,
+                    config={},
+                    name=group,
+                    separate_eval=self.separate_eval)
                 # Save the results for each group
                 all_results[group]["loss"] = group_loss
                 all_results[group]["accuracy"] = group_metric["accuracy"]
+
+                if group_loss<self.best_loss[group]:
+                    self.best_loss[group] = group_loss
+                    self.save_model(server_round=server_round, group=group)
                     
                 # Weighted average for global results
                 if self.weighted_loss:
@@ -374,7 +416,6 @@ class ClusterAvg(Strategy):
                         weight = self.group_split[i] / self.group_split[-1]
                     else:
                         weight = (self.group_split[i] - self.group_split[i-1]) / self.group_split[-1]
-                
                 else:
                     weight = 1 / len(self.group_param)
 
@@ -389,3 +430,104 @@ class ClusterAvg(Strategy):
             return all_results["global"]["loss"], all_results
 
         return None
+    
+    def assemble_model(self, group: str) -> NDArrays:
+        """
+        Assemble the model parameters from the global and group-specific parameters.
+        This method reconstructs the model state dictionary from the current global
+        and group-specific parameters.
+
+        Args:
+            group (str): The group name to assemble the model for. If "all", it assembles
+                the model for all groups.
+
+        Returns:
+            NDArrays: parameters of the model as array.
+        """
+        if group not in self.group_param.keys():
+            raise ValueError(f"Group {group} not found in {list(self.group_param.keys())}.")
+            return None
+        
+        param = []
+        global_param = parameters_to_ndarrays(self.global_param)
+        group_param = parameters_to_ndarrays(self.group_param[group])
+        c = 0
+        g = 0
+        for l in range(len(self.param_split)):
+            if self.param_split[l]:
+                # If this is a group layer, take it from groups parameters
+                param.append(group_param[g])
+                g += 1
+            else:
+                # If this is not a group layer, take it from global parameters
+                param.append(global_param[c])
+                c += 1
+
+        return param
+
+    def split_model(self, parameters: NDArrays) -> Tuple[NDArrays, NDArrays]:
+        """
+        Split the model parameters into global and group-specific parts.
+        This method separates the provided parameters into global parameters
+        and group-specific parameters based on the defined parameter split.
+
+        Args:
+            parameters (NDArrays): The model parameters to split.
+
+        Returns:
+            Tuple[NDArrays, NDArrays]: A tuple containing global
+                parameters and group-specific parameters.
+        """
+        global_param = []
+        group_param = []
+        if isinstance(parameters, Parameters):
+            parameters = parameters_to_ndarrays(parameters)
+
+        for l in range(len(self.param_split)):
+            if self.param_split[l]:
+                # If this is a group layer, save it in the groups parameters
+                group_param.append(parameters[l])
+            else:
+                # If this is not a group layer, save it in the global parameters
+                global_param.append(parameters[l])
+
+        return global_param, group_param
+            
+
+    def save_model(self, server_round: int, group: str="all") -> None:
+        """
+        Save the current model parameters to disk.
+        This method saves the global and group-specific parameters to the specified
+        save path, if provided.
+
+        Args:
+            round (int): The current round of federated learning.
+        """
+        if self.save_path is not None:
+            if group == "all":
+                for k in self.group_param.keys():
+                    self.save_model(server_round=server_round, group=k)
+            else:        
+                parameters = self.assemble_model(group)
+                model = EfficientNetModel()
+                set_weights(model, parameters)
+                torch.save(model.state_dict(), f"{self.save_path}/{group}.pt")
+                print(f"Model for {group} saved at round {server_round}.")
+
+    def get_group(self, cid: int) -> str:
+        '''
+        Get the group index for a given client ID based on the group split.
+        '''
+        cid = int(cid)
+        if self.group_split is None:
+            return "group0"
+
+        if cid < self.group_split[0]:
+            return "group0"
+    
+        for i in range(1, len(self.group_split)):
+            if self.group_split[i-1] <= cid < self.group_split[i]:
+                return f"group{i}"
+        
+        raise ValueError(f"Client ID {cid} does not belong to any group in the split {self.group_split}.")
+        return "group0"
