@@ -92,7 +92,7 @@ class MyFedAvg(Strategy):
         config = self.on_fit_config_fn(server_round) if self.on_fit_config_fn else {}
         # Each client needs its group parameters
         tuples = []
-        print(f"In round {server_round} selected {len(clients)} clients for fitting:")
+        print(f"In round {server_round} selected {len(clients)} clients for fitting.")
         for client in clients:
             fit_ins = FitIns(parameters, config)
             # INFO FitIns is a tuple of (parameters, config), returned with its client (for each client)
@@ -225,12 +225,7 @@ class MyFedAvg(Strategy):
             parameters = parameters_to_ndarrays(self.parameters) 
             model = EfficientNetModel()
             set_weights(model, parameters)
-            #base_state_dict = model.state_dict()
-            #param_names = list(base_state_dict.keys())
-            #new_state_dict = {}
-            #for name, array in zip(param_names, parameters):
-            #    new_state_dict[name] = torch.from_numpy(array)
-
-            #model.load_state_dict(new_state_dict)
             torch.save(model.state_dict(), f"{self.save_path}/model.pt")
             print(f"Model saved at round {server_round}.")
+        else:
+            return None

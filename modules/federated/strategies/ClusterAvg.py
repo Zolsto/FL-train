@@ -513,6 +513,8 @@ class MoreClusterAvg(Strategy):
                 set_weights(model, parameters)
                 torch.save(model.state_dict(), f"{self.save_path}/{group}.pt")
                 print(f"Model for {group} saved at round {server_round}.")
+        else:
+            return None
 
     def get_group(self, cid: int) -> str:
         '''

@@ -44,7 +44,7 @@ def main():
     unique_paths_contactNonPolarized, unique_labels_contactNonPolarized = loader.extract_image_paths_and_labels(contactPolarized=False, contactNonPolarized=True, nonContactPolarized=False)
     unique_paths_nonContactPolarized, unique_labels_nonContactPolarized = loader.extract_image_paths_and_labels(contactPolarized=False, contactNonPolarized=False, nonContactPolarized=True)
 
-    data_module_contactPolarized = SkinLesionDataModule(unique_paths_contactPolarized, unique_labels_contactPolarized, batch_size=32, augm=False, selec_augm=False)
+    data_module_contactPolarized = SkinLesionDataModule(unique_paths_contactPolarized, unique_labels_contactPolarized, batch_size=32, augm=True, selec_augm=False)
     data_module_contactNonPolarized = SkinLesionDataModule(unique_paths_contactNonPolarized, unique_labels_contactNonPolarized, batch_size=32, augm=True, selec_augm=False)
     data_module_nonContactPolarized = SkinLesionDataModule(unique_paths_nonContactPolarized, unique_labels_nonContactPolarized, batch_size=32, augm=True, selec_augm=False)
 
@@ -139,13 +139,6 @@ def main():
     pre_trained_weights = [layer.cpu().numpy() for layer in model.state_dict().values()]
     #print(list(model.state_dict().keys()))
     start_parameters = ndarrays_to_parameters(pre_trained_weights)
-    split_index = -1
-    for i, name in enumerate(model.state_dict().keys()):
-        if split_index > 0:
-            break
-
-        if "features.2" in name:
-            split_index = i
 
     split_indexes = []
     for name in model.state_dict().keys():
@@ -154,7 +147,7 @@ def main():
         else:
             split_indexes.append(False)
     
-    print(split_index)
+    print(split_indexes)
     model.to(device)
     print(model.named_parameters())
     loss_fn = torch.nn.CrossEntropyLoss()
@@ -211,14 +204,13 @@ def main():
 
     # Personalized strategy
     fed_trainer.set_client_and_server(
-        strategy=strategies.MoreClusterAvg(
+        strategy=strategies.ClusterAvg(
             # Parameters of ClusterAvg
-#            group_at_end=False,
+            param_split=split_indexes,
             separate_eval=True,
             weighted_loss=True,
             group_split=group_split,
             writer=server_writer,
-            param_split=split_indexes,
             save_path=logdir,
             # Parameters like FedAvg
             fraction_fit=0.00001,   #0.00001

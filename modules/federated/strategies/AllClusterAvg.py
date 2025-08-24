@@ -514,12 +514,7 @@ class AllClusterAvg(Strategy):
              
                 model = EfficientNetModel()
                 set_weights(model, parameters)
-                #base_state_dict = model.state_dict()
-                #param_names = list(base_state_dict.keys())
-                #new_state_dict = {}
-                #for name, array in zip(param_names, parameters):
-                #    new_state_dict[name] = torch.from_numpy(array)
-
-                #model.load_state_dict(new_state_dict)
                 torch.save(model.state_dict(), f"{self.save_path}/{group}.pt")
                 print(f"Model for {group} saved at round {server_round}.")
+        else:
+            return None
