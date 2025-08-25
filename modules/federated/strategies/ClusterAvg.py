@@ -102,11 +102,10 @@ class MoreClusterAvg(Strategy):
             base_model = EfficientNetModel()
             state_dict = base_model.model.state_dict()
             initial_parameters = [val.cpu().numpy() for val in state_dict.values()]
-            for group in self.group_param.keys():
-                self.global_param, self.group_param[group] = self.split_model(initial_parameters)
+            self.global_param, cluster_param = self.split_model(initial_parameters)
             self.global_param = ndarrays_to_parameters(self.global_param)
             for group in self.group_param.keys():
-                self.group_param[group] = ndarrays_to_parameters(self.group_param[group])
+                self.group_param[group] = ndarrays_to_parameters(cluster_param)
 
             return ndarrays_to_parameters(initial_parameters)
     
