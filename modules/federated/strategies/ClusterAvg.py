@@ -23,7 +23,7 @@ from torch.utils.tensorboard import SummaryWriter
 #from modules.federated.strategies.utils import get_evaluate_fn, get_fit_metrics_aggregation_fn
 from modules.federated.utils import get_weights, set_weights
 
-class MoreClusterAvg(Strategy):
+class ClusterAvg(Strategy):
     def __init__(
         self,
         # list of partition IDs at the start of each group
@@ -32,6 +32,8 @@ class MoreClusterAvg(Strategy):
         group_split: List[int],
         # list of layers: True -> group, False -> global
         param_split: List[bool],
+        # Whether to allow a group to slow the update if not trained (abstain)
+        abstain: bool = True,
         fraction_fit: float = 1.0,
         fraction_evaluate: float = 1.0,
         min_fit_clients: int = 2,
@@ -63,6 +65,7 @@ class MoreClusterAvg(Strategy):
         self.separate_eval = separate_eval
         self.group_split = group_split
         self.param_split = param_split
+        self.abstain = abstain
         self.weighted_loss = weighted_loss
         self.writer = writer
         self.save_path = save_path
@@ -217,8 +220,13 @@ class MoreClusterAvg(Strategy):
         # Compute global avg and per group avg (only on group present in training)
         base_w = 1 / len(self.group_param)
         for group, params, n in updates:
-            group_w = n / group_examples[group]
-            global_w = group_w * base_w
+            if self.abstain:
+                group_w = n / group_examples[group]
+                global_w = group_w * base_w
+            else:
+                global_w = n / total_examples
+                group_w = n / group_examples[group]
+
             global_update, group_update = self.split_model(params)
             for avg, update in zip(global_avg, global_update):
                 avg += update * global_w
@@ -227,7 +235,7 @@ class MoreClusterAvg(Strategy):
                 avg += update * group_w
         
         # If some groups were not trained, their average is considered as unchanged (abstain)
-        if len(group_examples) < len(self.group_param):
+        if len(group_examples) < len(self.group_param) and self.abstain:
             old_param = parameters_to_ndarrays(self.global_param)
             for group in self.group_param.keys():
                 # If this group was not trained...

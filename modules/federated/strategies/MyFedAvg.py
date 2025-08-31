@@ -29,6 +29,7 @@ class MyFedAvg(Strategy):
             min_fit_clients: int = 2,
             min_evaluate_clients: int = 2,
             min_available_clients: int = 2,
+            n_groups: int = 1,
             on_fit_config_fn: Optional[Callable] = None,
             on_evaluate_config_fn: Optional[Callable] = None,
             evaluate_fn: Optional[Callable] = None,
@@ -47,6 +48,7 @@ class MyFedAvg(Strategy):
         self.evaluate_fn = evaluate_fn
         self.best_loss = np.inf
         self.parameters = initial_parameters
+        self.n_groups = n_groups
         self.save_path = save_path
 
     def initialize_parameters(
@@ -208,6 +210,15 @@ class MyFedAvg(Strategy):
             if loss < self.best_loss:
                 self.best_loss = loss
                 self.save_model(server_round)
+            
+            if self.n_groups > 1:
+                for g in range(self.n_groups):
+                    group = f"group{g}"
+                    g_loss, g_metrics = self.evaluate_fn(server_round=server_round,
+                        parameters=parameters_to_ndarrays(parameters),
+                        config={},
+                        name=group,
+                        separate_eval=True)
 
             return loss, metrics
 

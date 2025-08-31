@@ -137,23 +137,22 @@ def main():
     model = EfficientNetModel(num_classes=6, fine_tune_layers=True, premodel="presint")
     # Load pre-trained weights
     pre_trained_weights = [layer.cpu().numpy() for layer in model.state_dict().values()]
-    #print(list(model.state_dict().keys()))
+    print(list(model.state_dict().keys()))
     start_parameters = ndarrays_to_parameters(pre_trained_weights)
 
     split_indexes = []
     for name in model.state_dict().keys():
-        if "features.0" in name or "features.1" in name or "classifier" in name:
+        if "features.0" in name or "features.1" in name:
             split_indexes.append(True)
         else:
             split_indexes.append(False)
     
     print(split_indexes)
     model.to(device)
-    print(model.named_parameters())
     loss_fn = torch.nn.CrossEntropyLoss()
     #raise Exception("Stopped")
 
-    logdir = "output/FedAvg/my-nopre"
+    logdir = "output/ClusterAvg/s2-pre-local5"
     os.makedirs(logdir, exist_ok=True)
     server_writer = SummaryWriter(log_dir=logdir)
 
@@ -183,51 +182,53 @@ def main():
     )
 
     # FedAvg strategy
-    fed_trainer.set_client_and_server(
-        strategy=strategies.MyFedAvg(
-            save_path=logdir,
-            fraction_fit=0.00001,
-            fraction_evaluate=1,
-            min_fit_clients=5,
-            #min_evaluate_clients=10,
-            min_available_clients=10,
-            on_fit_config_fn=strategies.get_on_fit_config({"local_epochs": 5}),
-            #on_evaluate_config_fn=strategies.get_on_evaluate_config({"batch_size": 32}),
-            fit_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn(),
-            #evaluate_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn()
-            evaluate_fn=evaluate_f,
-            initial_parameters=None
-        ),
-        num_rounds=50,
-        log_every=1,
-    )
-
-    # Personalized strategy
 #    fed_trainer.set_client_and_server(
-#        strategy=strategies.ClusterAvg(
-#            # Parameters of ClusterAvg
-#            param_split=split_indexes,
-#            separate_eval=True,
-#            weighted_loss=True,
-#            group_split=group_split,
-#            writer=server_writer,
+#        strategy=strategies.MyFedAvg(
 #            save_path=logdir,
-#            # Parameters like FedAvg
-#            fraction_fit=0.00001,   #0.00001
+#            n_groups=3,
+#            fraction_fit=0.00001,
 #            fraction_evaluate=1,
 #            min_fit_clients=5,
-#            # min_evaluate_clients=10,
+#            #min_evaluate_clients=10,
 #            min_available_clients=10,
 #            on_fit_config_fn=strategies.get_on_fit_config({"local_epochs": 5}),
-#            # on_evaluate_config_fn=strategies.get_on_evaluate_config({"batch_size": 32}),
+#            #on_evaluate_config_fn=strategies.get_on_evaluate_config({"batch_size": 32}),
 #            fit_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn(),
-#            # evaluate_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn()
+#            #evaluate_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn()
 #            evaluate_fn=evaluate_f,
-#            initial_parameters=start_parameters
+#            initial_parameters=None
 #        ),
 #        num_rounds=50,
 #        log_every=1,
 #    )
+
+    # Personalized strategy
+    fed_trainer.set_client_and_server(
+        strategy=strategies.ClusterAvg(
+            # Parameters of ClusterAvg
+            abstain = False,
+            param_split=split_indexes,
+            separate_eval=True,
+            weighted_loss=True,
+            group_split=group_split,
+            writer=server_writer,
+            save_path=logdir,
+            # Parameters like FedAvg
+            fraction_fit=0.00001,   #0.00001
+            fraction_evaluate=1,
+            min_fit_clients=5,
+            # min_evaluate_clients=10,
+            min_available_clients=10,
+            on_fit_config_fn=strategies.get_on_fit_config({"local_epochs": 5}),
+            # on_evaluate_config_fn=strategies.get_on_evaluate_config({"batch_size": 32}),
+            fit_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn(),
+            # evaluate_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn()
+            evaluate_fn=evaluate_f,
+            initial_parameters=start_parameters
+        ),
+        num_rounds=80,
+        log_every=1,
+    )
 
     fed_trainer(num_clients=80)
     server_writer.close()
