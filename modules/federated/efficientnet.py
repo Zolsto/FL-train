@@ -4,6 +4,7 @@ import torchvision.models as models
 import numpy as np
 from torchvision.models import EfficientNet_B0_Weights
 from collections import OrderedDict
+from modules.federated.utils import get_weights, set_weights
 
 class EfficientNetModel(nn.Module):
     def __init__(self, num_classes: int=6, fine_tune_layers: bool=True, weights: list=None, premodel: str=None):
@@ -28,7 +29,7 @@ class EfficientNetModel(nn.Module):
             nn.Linear(in_features=128, out_features=num_classes)
         )
         if weights is not None:
-            param_names = [name for name in self.model.state_dict.keys()]
+            param_names = [name for name in self.model.state_dict().keys()]
             state_dict = {}
             for name, array in zip(param_names, weights):
                 state_dict[name] = torch.from_numpy(array)

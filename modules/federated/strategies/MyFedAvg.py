@@ -67,10 +67,9 @@ class MyFedAvg(Strategy):
             base_model = EfficientNetModel()
             state_dict = base_model.model.state_dict()
             parameters = [val.cpu().numpy() for val in state_dict.values()]
-            parameters = ndarrays_to_parameters(parameters)
-            self.parameters = parameters
+            self.parameters = ndarrays_to_parameters(parameters)
 
-        return self.parameters
+        return ndarrays_to_parameters(parameters)
         
     def configure_fit(
         self,
@@ -129,7 +128,7 @@ class MyFedAvg(Strategy):
                 avg[i] += weights[client][i] * w
         
         self.parameters = ndarrays_to_parameters(avg)
-        return self.parameters, {}
+        return ndarrays_to_parameters(avg), {}
 
     def configure_evaluate(
         self,
@@ -189,7 +188,7 @@ class MyFedAvg(Strategy):
                 aggregated_metrics[metric_name] = np.average(metric_values, weights=all_metrics['num_examples'])
         
         if self.fraction_evaluate == 0:
-            self.save_model(server_round)
+            self.save_model(server_round=server_round)
 
         return aggregated_metrics['loss'], aggregated_metrics
 
@@ -205,17 +204,17 @@ class MyFedAvg(Strategy):
         # Optional server evaluation
         if self.evaluate_fn is not None:
             loss, metrics = self.evaluate_fn(server_round=server_round,
-                parameters=parameters_to_ndarrays(parameters),
+                parameters=parameters_to_ndarrays(self.parameters),
                 config={})
             if loss < self.best_loss:
                 self.best_loss = loss
-                self.save_model(server_round)
+                self.save_model(server_round=server_round)
             
             if self.n_groups > 1:
                 for g in range(self.n_groups):
                     group = f"group{g}"
                     g_loss, g_metrics = self.evaluate_fn(server_round=server_round,
-                        parameters=parameters_to_ndarrays(parameters),
+                        parameters=parameters_to_ndarrays(self.parameters),
                         config={},
                         name=group,
                         separate_eval=True)
@@ -233,7 +232,7 @@ class MyFedAvg(Strategy):
             round (int): The current round of federated learning.
         """
         if self.save_path is not None:
-            parameters = parameters_to_ndarrays(self.parameters) 
+            parameters = parameters_to_ndarrays(self.parameters)
             model = EfficientNetModel()
             set_weights(model, parameters)
             torch.save(model.state_dict(), f"{self.save_path}/model.pt")

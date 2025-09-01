@@ -319,3 +319,67 @@ def get_evaluate_fn(
         return metrics["loss"], {"accuracy": metrics["accuracy"]}
 
     return evaluate_fn
+
+def get_fed_evaluate_fn(
+    model: torch.nn.Module,
+    device: Union[torch.device, str],
+    criterion: torch.nn.Module,
+    dataloader: torch.utils.data.DataLoader,
+    writer: Optional[SummaryWriter] = None,
+    loader_dict: Optional[Dict[str, torch.utils.data.DataLoader]] = None
+) -> Callable[[int, NDArrays, Dict[str, Scalar]], Tuple[float, Dict[str, Scalar]]]:
+    """
+    Get the function to evaluate the model during FedAvg on the test set.
+
+    Args:
+        model (torch.nn.Module): The model to evaluate.
+        device (Union[torch.device, str]): The device on which the evaluation will be performed.
+        dataloader (torch.utils.data.DataLoader): The test data loader.
+
+    Returns:
+        Callable[int, NDArrays, Dict[str, Scalar], Tuple[float, Dict[str, Scalar]]]:
+            The function to evaluate the model on the test set.
+    """
+
+    # Parse the device
+    if isinstance(device, str):
+        device = torch.device(device)
+
+    # Define the evaluation function
+    def evaluate_fn(
+        server_round: int,
+        parameters: NDArrays,
+        config: Dict[str, Scalar],  # pylint: disable=unused-argument
+    ) -> Optional[Tuple[float, Dict[str, Scalar]]]:
+        # Update the model with the latest parameters
+        set_weights(model, parameters)
+
+        if loader_dict is not None:
+            for k, v in loader_dict.items():
+                metrics = test(
+                    model=model,
+                    device=device,
+                    criterion=criterion,  # config["criterion"],
+                    dataloader=v)
+                if writer is not None:
+                    #print(f"Logging {name} results: loss({metrics['loss']}) accuracy({metrics['accuracy']})")
+                    if server_round==0:
+                        print(f"Testing on {k} with {len(v.dataset)} samples.")
+                    writer.add_scalar(f"{k}/loss", metrics['loss'], server_round)
+                    writer.add_scalar(f"{k}/accuracy", metrics['accuracy'], server_round)
+
+        # Evaluate the model
+        metrics = test(
+            model=model,
+            device=device,
+            criterion=criterion,  # config["criterion"],
+            dataloader=dataloader,
+        )
+        if writer is not None:
+            #print(f"Logging {name} results: loss({metrics['loss']}) accuracy({metrics['accuracy']})")
+            writer.add_scalar("global/loss", metrics['loss'], server_round)
+            writer.add_scalar("global/accuracy", metrics['accuracy'], server_round)
+            
+        return metrics["loss"], {"accuracy": metrics["accuracy"]}
+    
+    return evaluate_fn
