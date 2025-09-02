@@ -363,8 +363,9 @@ def get_fed_evaluate_fn(
                     dataloader=v)
                 if writer is not None:
                     #print(f"Logging {name} results: loss({metrics['loss']}) accuracy({metrics['accuracy']})")
-                    if server_round==0:
+                    if server_round==1:
                         print(f"Testing on {k} with {len(v.dataset)} samples.")
+                        
                     writer.add_scalar(f"{k}/loss", metrics['loss'], server_round)
                     writer.add_scalar(f"{k}/accuracy", metrics['accuracy'], server_round)
 
