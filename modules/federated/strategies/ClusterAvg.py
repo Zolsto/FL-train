@@ -75,9 +75,9 @@ class ClusterAvg(Strategy):
         if initial_parameters is not None:
             for group in self.group_param.keys():
                 self.global_param, self.group_param[group] = self.split_model(initial_parameters)
-            self.global_param = ndarrays_to_parameters(self.global_param)
-            for group in self.group_param.keys():
                 self.group_param[group] = ndarrays_to_parameters(self.group_param[group])
+
+            self.global_param = ndarrays_to_parameters(self.global_param)
         else:
             self.global_param = None
 
@@ -102,15 +102,15 @@ class ClusterAvg(Strategy):
         """
         # If no initial parameters are given, use base model to initialize
         if self.global_param is None:
-            base_model = EfficientNetModel()
-            state_dict = base_model.model.state_dict()
-            initial_parameters = [val.cpu().numpy() for val in state_dict.values()]
-            self.global_param, cluster_param = self.split_model(initial_parameters)
-            self.global_param = ndarrays_to_parameters(self.global_param)
-            for group in self.group_param.keys():
-                self.group_param[group] = ndarrays_to_parameters(cluster_param)
+            #base_model = EfficientNetModel()
+            #state_dict = base_model.model.state_dict()
+            #initial_parameters = [val.cpu().numpy() for val in state_dict.values()]
+            #self.global_param, cluster_param = self.split_model(initial_parameters)
+            #self.global_param = ndarrays_to_parameters(self.global_param)
+            #for group in self.group_param.keys():
+            #    self.group_param[group] = ndarrays_to_parameters(cluster_param)
 
-            return ndarrays_to_parameters(initial_parameters)
+            return None
     
         return ndarrays_to_parameters(self.assemble_model("group0"))
         
@@ -154,7 +154,15 @@ class ClusterAvg(Strategy):
             properties_res = client.get_properties(ins=GetPropertiesIns(config={}), group_id=0, timeout=30)
             partition_id = int(properties_res.properties["partition_id"])
             group = self.get_group(partition_id)
+            if server_round<=1 and self.global_param is None:
+                parameters = parameters_to_ndarrays(parameters)
+                self.global_param, cluster_param = self.split_model(parameters)
+                self.global_param = ndarrays_to_parameters(self.global_param)
+                for group in self.group_param.keys():
+                    self.group_param[group] = ndarrays_to_parameters(cluster_param)
+            
             parameters = ndarrays_to_parameters(self.assemble_model(group))
+
             print(f"Group {group[-1]}, partition ID {partition_id}")
             fit_ins = FitIns(parameters, config)
             # INFO FitIns is a tuple of (parameters, config), returned with its client (for each client)
@@ -248,6 +256,9 @@ class ClusterAvg(Strategy):
         self.global_param = ndarrays_to_parameters(global_avg)
         for k, v in group_avg.items():
             self.group_param[k] = ndarrays_to_parameters(v)
+        
+        if self.fraction_evaluate == 0:
+            self.save_model(server_round)
 
         return self.global_param, {}
 
@@ -371,9 +382,6 @@ class ClusterAvg(Strategy):
                 for metric in group_data.keys():
                     aggregated_metrics[f"{group_name}_{metric}"] = 0
 
-        if self.fraction_evaluate == 0:
-            self.save_model(server_round)
-
         return aggregated_metrics["global_loss"], aggregated_metrics
 
     def evaluate(
@@ -395,7 +403,7 @@ class ClusterAvg(Strategy):
             Optional[Tuple[float, Dict[str, Scalar]]]: A tuple containing the
                 globally aggregated loss and a dictionary of all detailed metrics.
         """
-
+        
         # Optional server evaluation
         if self.evaluate_fn is not None:
             #return self.evaluate_fn(server_round, parameters_to_ndarrays(parameters), {})
@@ -403,6 +411,13 @@ class ClusterAvg(Strategy):
             all_results["global"] = { "loss": 0.0, "accuracy": 0.0 }
             i = 0
             for group in self.group_param.keys():
+                if server_round<=1 and self.global_param is None:
+                    parameters = parameters_to_ndarrays(parameters)
+                    self.global_param, cluster_param = self.split_model(parameters)
+                    self.global_param = ndarrays_to_parameters(self.global_param)
+                    for group in self.group_param.keys():
+                        self.group_param[group] = ndarrays_to_parameters(cluster_param)
+                
                 parameters = self.assemble_model(group)
                 group_loss, group_metric = self.evaluate_fn(server_round=server_round,
                     parameters=parameters,
@@ -413,7 +428,7 @@ class ClusterAvg(Strategy):
                 all_results[group]["loss"] = group_loss
                 all_results[group]["accuracy"] = group_metric["accuracy"]
 
-                if group_loss<self.best_loss[group]:
+                if group_loss<self.best_loss[group] and server_round>0:
                     self.best_loss[group] = group_loss
                     self.save_model(server_round=server_round, group=group)
                     
@@ -472,7 +487,7 @@ class ClusterAvg(Strategy):
 
         return param
 
-    def split_model(self, parameters: NDArrays) -> Tuple[NDArrays, NDArrays]:
+    def split_model(self, parameters: Union[Parameters, NDArrays]) -> Tuple[NDArrays, NDArrays]:
         """
         Split the model parameters into global and group-specific parts.
         This method separates the provided parameters into global parameters

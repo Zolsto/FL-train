@@ -297,12 +297,12 @@ def get_evaluate_fn(
             # Use the specific dataloader for the group
             test_loader = loader_dict[name]
             if server_round==1:
-                print(f"Using separate evaluation for {name} with {len(test_loader.dataset)} samples.")
+                print(f"Separate evaluation for {name} with {len(test_loader.dataset)} samples.")
         else:
             # Use the default dataloader
             test_loader = dataloader
             if server_round==1:
-                print(f"Using global evaluation with {len(test_loader.dataset)} samples.")
+                print(f"Global evaluation with {len(test_loader.dataset)} samples.")
 
         # Evaluate the model
         metrics = test(
