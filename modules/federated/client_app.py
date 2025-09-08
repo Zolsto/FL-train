@@ -13,7 +13,7 @@ Constants:
 Exceptions:
     None
 
-    
+
 Author: Matteo Caligiuri
 """
 
@@ -27,6 +27,9 @@ from hydra.utils import instantiate
 
 from .task import train, test
 from .utils import get_weights, set_weights
+
+import os
+import logging
 
 
 # Define wahat to export
@@ -57,22 +60,38 @@ class FlowerClient(NumPyClient):
         optimizer: Union[torch.optim.Optimizer, DictConfig],
         trainloader: torch.utils.data.DataLoader,
         valloader: torch.utils.data.DataLoader,
+        save_path: str = None
     ):
 
         # Initialize the FlowerClient variables
         self.partition_id = partition_id
-
         self.model = model
         self.device = device
         self.criterion = criterion
         self.optimizer = optimizer
         self.trainloader = trainloader
         self.valloader = valloader
+        self.save_path = save_path
+
+        # Logging
+        os.makedirs(self.save_path, exist_ok=True)
+
+        # Ogni client scriverà in un file diverso (es. client_0.log, client_1.log)
+        log_file_path = os.path.join(self.save_path, f"client_{self.partition_id}.log")
+
+        # Configura il logger per scrivere su file
+        logging.basicConfig(
+            filename=log_file_path,
+            level=logging.INFO,
+            format=f'%(asctime)s - Client {self.partition_id} - %(levelname)s - %(message)s',
+            force=True)
+
+        #logging.info("Logger inizializzato.")
 
     def get_parameters(self, config):
         print(f"[Client {self.partition_id}] get_parameters")
         return get_weights(self.model)
-    
+
     def get_properties(self, config: Dict={}, group_id: int=0):
         """
         Get the partition ID of the client.
@@ -123,6 +142,7 @@ class FlowerClient(NumPyClient):
             dataloader=self.valloader,
         )
         metrics["partition_id"] = self.partition_id
+        logging.info(f"Evaluation metrics: {metrics}")
         # Extract the loss from the metrics
         loss = metrics.pop("loss")
         return float(loss), len(self.valloader), metrics
@@ -134,6 +154,7 @@ def generate_client_fn(
     criterion: torch.nn.Module,
     optimizer: Union[torch.optim.Optimizer, DictConfig],
     dataloaders: callable,
+    save_path: str = None
 ) -> callable:
     """
     Generate the client_fn function to use for the federated learning process.
@@ -173,6 +194,7 @@ def generate_client_fn(
             optimizer=optimizer,
             trainloader=data["train"],
             valloader=data["val"],
+            save_path=save_path
         ).to_client()
 
     return client_fn

@@ -27,7 +27,6 @@ def main():
 
     print("GUIDE TO DEBUG")
     print("\n- To print shape of model's output and labels: federated/task.py line 232")
-
     print()
 
     folder_path_contactPolarized = "../../Sensor based dataset/Filtered-by-pathology-unique/Contact Polarized"
@@ -123,6 +122,15 @@ def main():
 
     partitioners_dict = {"train": train_combined_partitioner, "val": val_combined_partitioner}
 
+    # For testing, use just one client with all the data
+    #partitioner_train = DirichletPartitioner(num_partitions=2, alpha=30, seed=42, partition_by=1, min_partition_size=80, self_balancing=False, shuffle=True, shift_indices=0, shift_partition_id=0)
+    #partitioner_train.dataset = train_dataset
+    #partitioner_train.create_partitions()
+    #partitioner_val = DirichletPartitioner(num_partitions=2, alpha=30, seed=42, partition_by=1, min_partition_size=15, self_balancing=False, shuffle=True, shift_indices=0, shift_partition_id=0)
+    #partitioner_val.dataset = val_dataset
+    #partitioner_val.create_partitions()
+    #one_client_dict = {"train": partitioner_train, "val": partitioner_val}
+
     #fig_contactPolarized_train, _, _ = plot_label_distributions(train_combined_partitioner, label_name=1, max_num_partitions=80, plot_type="bar", legend=True, figsize=(20, 14))
     #fig_contactPolarized_train.savefig("Data Visualization/all_partitions_train.png")
 
@@ -141,19 +149,20 @@ def main():
     print(list(model.state_dict().keys()))
     start_parameters = ndarrays_to_parameters(pre_trained_weights)
 
+    model = EfficientNetModel(num_classes=6, fine_tune_layers=True)
     split_indexes = []
     for name in model.state_dict().keys():
-        if "features.0" in name or "features.1" in name:
+        if "features.0" in name or "features.1" in name or "features.2" in name:
             split_indexes.append(True)
         else:
             split_indexes.append(False)
-    
+
     print(split_indexes)
     model.to(device)
     loss_fn = torch.nn.CrossEntropyLoss()
     #raise Exception("Stopped")
 
-    logdir = "output/ClusterAvg/s1-pre"
+    logdir = "output/ClusterAvg/s2-pre"
     os.makedirs(logdir, exist_ok=True)
     server_writer = SummaryWriter(log_dir=logdir)
 
@@ -191,6 +200,7 @@ def main():
         loader_dict=test_dict
     )
     if "ClusterAvg" in logdir:
+        print("Using ClusterAvg strategy")
         # ClusterAvg strategy
         fed_trainer.set_client_and_server(
             strategy=strategies.ClusterAvg(
@@ -215,10 +225,11 @@ def main():
                 evaluate_fn=evaluate_f,
                 initial_parameters=start_parameters
             ),
-            num_rounds=80,
+            num_rounds=50,
             log_every=1,
         )
     else:
+        print("Using FedAvg strategy")
         # FedAvg strategy
         fed_trainer.set_client_and_server(
             strategy=strategies.MyFedAvg(
@@ -234,7 +245,7 @@ def main():
                 fit_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn(),
                 #evaluate_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn()
                 evaluate_fn=evaluate_f,
-                initial_parameters=start_parameters
+                initial_parameters=None
             ),
             num_rounds=50,
             log_every=1,

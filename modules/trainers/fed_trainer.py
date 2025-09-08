@@ -61,7 +61,7 @@ class FedTrainer:
         save_path: Optional[Union[Path, str]] = Path("fed_outputs"),
         checkpoint: Optional[Union[Path, str, OrderedDict]] = None,
     ) -> None:
-        
+
         if isinstance(save_path, str):
             save_path = Path(save_path)
 
@@ -218,6 +218,7 @@ class FedTrainer:
             criterion=self.criterion,
             optimizer=self.optimizer,
             dataloaders=self.dataloaders,
+            save_path=self.save_path
         )
 
         # Set the client

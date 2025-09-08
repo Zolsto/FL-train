@@ -33,7 +33,7 @@ class EfficientNetModel(nn.Module):
             state_dict = {}
             for name, array in zip(param_names, weights):
                 state_dict[name] = torch.from_numpy(array)
-            
+
             self.model.load_state_dict(state_dict)
         elif premodel is not None:
             new_dict = OrderedDict()
