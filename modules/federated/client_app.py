@@ -74,19 +74,18 @@ class FlowerClient(NumPyClient):
         self.save_path = save_path
 
         # Logging
-        os.makedirs(self.save_path, exist_ok=True)
+        if self.save_path is not None:
+            os.makedirs(self.save_path, exist_ok=True)
+            log_file_path = os.path.join(self.save_path, f"client_{self.partition_id}.log")
 
-        # Ogni client scriverà in un file diverso (es. client_0.log, client_1.log)
-        log_file_path = os.path.join(self.save_path, f"client_{self.partition_id}.log")
+            # Logger configuration
+            logging.basicConfig(
+                filename=log_file_path,
+                level=logging.INFO,
+                format=f'%(asctime)s - Client {self.partition_id} - %(levelname)s - %(message)s',
+                force=True)
 
-        # Configura il logger per scrivere su file
-        logging.basicConfig(
-            filename=log_file_path,
-            level=logging.INFO,
-            format=f'%(asctime)s - Client {self.partition_id} - %(levelname)s - %(message)s',
-            force=True)
-
-        #logging.info("Logger inizializzato.")
+            #logging.info("Logger inizializzato.")
 
     def get_parameters(self, config):
         print(f"[Client {self.partition_id}] get_parameters")
@@ -142,7 +141,8 @@ class FlowerClient(NumPyClient):
             dataloader=self.valloader,
         )
         metrics["partition_id"] = self.partition_id
-        logging.info(f"Evaluation metrics: {metrics}")
+        if self.save_path is not None:
+            logging.info(f"Evaluation metrics: {metrics}")
         # Extract the loss from the metrics
         loss = metrics.pop("loss")
         return float(loss), len(self.valloader), metrics

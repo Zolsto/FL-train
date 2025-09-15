@@ -152,7 +152,7 @@ def main():
     model = EfficientNetModel(num_classes=6, fine_tune_layers=True)
     split_indexes = []
     for name in model.state_dict().keys():
-        if "features.0" in name or "features.1" in name or "features.2" in name:
+        if "features.0" in name or "features.1" in name:
             split_indexes.append(True)
         else:
             split_indexes.append(False)
@@ -162,7 +162,7 @@ def main():
     loss_fn = torch.nn.CrossEntropyLoss()
     #raise Exception("Stopped")
 
-    logdir = "output/ClusterAvg/s2-pre"
+    logdir = "output/FedAvg/my-pre-80"
     os.makedirs(logdir, exist_ok=True)
     server_writer = SummaryWriter(log_dir=logdir)
 
@@ -172,7 +172,7 @@ def main():
         criterion=loss_fn,
         optimizer=torch.optim.AdamW,
         device=device,
-        save_path=logdir,
+        save_path=None,
     )
 
     fed_trainer.set_data(
@@ -206,6 +206,7 @@ def main():
             strategy=strategies.ClusterAvg(
                 # Parameters of ClusterAvg
                 abstain = False,
+                balance = False,
                 param_split=split_indexes,
                 separate_eval=True,
                 weighted_loss=True,
@@ -225,7 +226,7 @@ def main():
                 evaluate_fn=evaluate_f,
                 initial_parameters=start_parameters
             ),
-            num_rounds=50,
+            num_rounds=80,
             log_every=1,
         )
     else:
@@ -245,9 +246,9 @@ def main():
                 fit_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn(),
                 #evaluate_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn()
                 evaluate_fn=evaluate_f,
-                initial_parameters=None
+                initial_parameters=start_parameters
             ),
-            num_rounds=50,
+            num_rounds=80,
             log_every=1,
         )
 

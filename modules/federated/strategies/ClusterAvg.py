@@ -33,7 +33,9 @@ class ClusterAvg(Strategy):
         # list of layers: True -> group, False -> global
         param_split: List[bool],
         # Whether to allow a group to slow the update if not trained (abstain)
-        abstain: bool = True,
+        abstain: bool = False,
+        # Whether to merge minority groups
+        balance: bool = False,
         fraction_fit: float = 1.0,
         fraction_evaluate: float = 1.0,
         min_fit_clients: int = 2,
@@ -66,12 +68,13 @@ class ClusterAvg(Strategy):
         self.group_split = group_split
         self.param_split = param_split
         self.abstain = abstain
+        self.balance = balance
         self.weighted_loss = weighted_loss
         self.writer = writer
         self.save_path = save_path
         self.group_param = { f"group{i}": [] for i in range(len(self.group_split)) }
         self.best_loss = { f"group{i}": np.inf for i in range(len(self.group_split)) }
-        
+
         if initial_parameters is not None:
             for group in self.group_param.keys():
                 self.global_param, self.group_param[group] = self.split_model(initial_parameters)
@@ -111,9 +114,9 @@ class ClusterAvg(Strategy):
             #    self.group_param[group] = ndarrays_to_parameters(cluster_param)
 
             return None
-    
+
         return ndarrays_to_parameters(self.assemble_model("group0"))
-        
+
     def configure_fit(
         self,
         server_round: int,
@@ -160,7 +163,7 @@ class ClusterAvg(Strategy):
                 self.global_param = ndarrays_to_parameters(self.global_param)
                 for group in self.group_param.keys():
                     self.group_param[group] = ndarrays_to_parameters(cluster_param)
-            
+
             parameters = ndarrays_to_parameters(self.assemble_model(group))
 
             print(f"Group {group[-1]}, partition ID {partition_id}")
@@ -199,38 +202,51 @@ class ClusterAvg(Strategy):
         """
         if not results:
             return None, {}
-    
+
         # Initialize variables to save weights and num_examples
         updates = []
         group_avg = {}
         global_avg = [np.zeros_like(layer, dtype=np.float32) for layer in parameters_to_ndarrays(self.global_param)]
+        group_examples = {}
+        total_examples = 0
 
         # For each client
         for client, fit_res in results:
             # Get the weights, group and number of examples
             group = self.get_group(fit_res.metrics["partition_id"])
             weights = parameters_to_ndarrays(fit_res.parameters)
+            n = fit_res.num_examples
             # Save all in a tuple (0->group, 1->weight, 2->num_examples)
-            train_data = (group, weights, fit_res.num_examples)
+            train_data = (group, weights, n)
             updates.append(train_data)
             # initialize this group avg to 0
             if group not in group_avg.keys():
                 group_avg[group] = [np.zeros_like(layer, dtype=np.float32) for layer in parameters_to_ndarrays(self.group_param[group])]
-        
-        # Compute total number of examples (global and per group)
-        group_examples = {}
-        total_examples = 0
-        for k in group_avg.keys():
-            g_list = [item[2] for item in updates if item[0]==k]
-            group_examples[k] = np.sum(g_list)
-            total_examples += group_examples[k]
-        
+
+            # If balancing, ensure group1 is present
+            if self.balance and group=='group2':
+                group = 'group1'
+
+            if group not in group_examples.keys():
+                group_examples[group] = 0
+
+            group_examples[group] += n
+            total_examples += n
+
+        if self.balance and 'group2' in group_avg.keys():
+            group_avg['group1'] = [np.zeros_like(layer, dtype=np.float32) for layer in parameters_to_ndarrays(self.group_param['group1'])]
+
         # Compute global avg and per group avg (only on group present in training)
-        base_w = 1 / len(self.group_param)
         for group, params, n in updates:
+            if self.balance and group=='group2':
+                group = 'group1'
+
             if self.abstain:
                 group_w = n / group_examples[group]
-                global_w = group_w * base_w
+                if self.balance:
+                    global_w = group_w / 2
+                else:
+                    global_w = group_w / 3
             else:
                 global_w = n / total_examples
                 group_w = n / group_examples[group]
@@ -241,22 +257,33 @@ class ClusterAvg(Strategy):
 
             for avg, update in zip(group_avg[group], group_update):
                 avg += update * group_w
-        
+
         # If some groups were not trained, their average is considered as unchanged (abstain)
-        if len(group_examples) < len(self.group_param) and self.abstain:
+        if self.abstain and len(group_examples) < len(self.group_param):
             old_param = parameters_to_ndarrays(self.global_param)
-            for group in self.group_param.keys():
-                # If this group was not trained...
-                if group not in group_examples.keys():
-                    # consider its average as unchanged
-                    for avg, old in zip(global_avg, old_param):
-                        avg += old * base_w
-                    
+            # If only one group was trained and balance is active
+            if self.balance and len(group_examples)==1:
+                # Add the other half of global avg as unchanged
+                for avg, old in zip(global_avg, old_param):
+                    avg += old / 2
+            # Ifbalance is inactive instead
+            elif not self.balance:
+                for group in self.group_param.keys():
+                    # If this group was not trained...
+                    if group not in group_avg.keys():
+                        # consider its average as unchanged
+                        for avg, old in zip(global_avg, old_param):
+                            avg += old / 3
+
         # Update old parameters
         self.global_param = ndarrays_to_parameters(global_avg)
         for k, v in group_avg.items():
             self.group_param[k] = ndarrays_to_parameters(v)
-        
+
+        # If balancing, group1 and group2 are the same
+        if self.balance:
+            self.group_param['group2'] = self.group_param['group1']
+
         if self.fraction_evaluate == 0:
             self.save_model(server_round)
 
@@ -300,7 +327,7 @@ class ClusterAvg(Strategy):
             evaluate_ins = EvaluateIns(parameters, config)
             # INFO EvaluateIns is a tuple of (parameters, config), returned with its client (for each client)
             tuples.append((client, evaluate_ins))
-            
+
         return tuples
 
     def aggregate_evaluate(
@@ -337,15 +364,15 @@ class ClusterAvg(Strategy):
 
         for client, evaluate_res in results:
             group = self.get_group(evaluate_res.metrics["partition_id"])
-        
+
             # Save group metrics
             groups_metrics[group]["loss"].append(evaluate_res.loss)
             groups_metrics[group]["num_examples"].append(evaluate_res.num_examples)
-        
+
             # Save global metrics
             global_metrics["loss"].append(evaluate_res.loss)
             global_metrics["num_examples"].append(evaluate_res.num_examples)
-        
+
             # Add other metrics if present
             for metric_name, metric_value in evaluate_res.metrics.items():
                 if metric_name not in groups_metrics[group].keys():
@@ -356,7 +383,7 @@ class ClusterAvg(Strategy):
 
                 groups_metrics[group][metric_name].append(metric_value)
                 global_metrics[metric_name].append(metric_value)
-            
+
         # Aggregate all metrics
         aggregated_metrics = {}
         for k, v in global_metrics.items():
@@ -366,7 +393,7 @@ class ClusterAvg(Strategy):
                 weighted_avg = np.average(v, weights=global_metrics["num_examples"])
 
             aggregated_metrics[f"global_{k}"] = weighted_avg
-            
+
         for group_name, group_data in groups_metrics.items():
             group_examples = np.sum(group_data["num_examples"])
             if group_examples > 0:
@@ -403,7 +430,7 @@ class ClusterAvg(Strategy):
             Optional[Tuple[float, Dict[str, Scalar]]]: A tuple containing the
                 globally aggregated loss and a dictionary of all detailed metrics.
         """
-        
+
         # Optional server evaluation
         if self.evaluate_fn is not None:
             #return self.evaluate_fn(server_round, parameters_to_ndarrays(parameters), {})
@@ -417,7 +444,7 @@ class ClusterAvg(Strategy):
                     self.global_param = ndarrays_to_parameters(self.global_param)
                     for group in self.group_param.keys():
                         self.group_param[group] = ndarrays_to_parameters(cluster_param)
-                
+
                 parameters = self.assemble_model(group)
                 group_loss, group_metric = self.evaluate_fn(server_round=server_round,
                     parameters=parameters,
@@ -431,7 +458,7 @@ class ClusterAvg(Strategy):
                 if group_loss<self.best_loss[group] and server_round>0:
                     self.best_loss[group] = group_loss
                     self.save_model(server_round=server_round, group=group)
-                    
+
                 # Weighted average for global results
                 if self.weighted_loss:
                     if i == 0:
@@ -444,15 +471,15 @@ class ClusterAvg(Strategy):
                 all_results["global"]["loss"] += group_loss * weight
                 all_results["global"]["accuracy"] += group_metric["accuracy"] * weight
                 i += 1
-            
+
             if self.writer:
                 self.writer.add_scalar("global/loss", all_results["global"]["loss"], server_round)
                 self.writer.add_scalar("global/accuracy", all_results["global"]["accuracy"], server_round)
-            
+
             return all_results["global"]["loss"], all_results
 
         return None
-    
+
     def assemble_model(self, group: str) -> NDArrays:
         """
         Assemble the model parameters from the global and group-specific parameters.
@@ -469,7 +496,7 @@ class ClusterAvg(Strategy):
         if group not in self.group_param.keys():
             raise ValueError(f"Group {group} not found in {list(self.group_param.keys())}.")
             return None
-        
+
         param = []
         global_param = parameters_to_ndarrays(self.global_param)
         group_param = parameters_to_ndarrays(self.group_param[group])
@@ -514,7 +541,7 @@ class ClusterAvg(Strategy):
                 global_param.append(parameters[l])
 
         return global_param, group_param
-            
+
 
     def save_model(self, server_round: int, group: str="all") -> None:
         """
@@ -529,7 +556,7 @@ class ClusterAvg(Strategy):
             if group == "all":
                 for k in self.group_param.keys():
                     self.save_model(server_round=server_round, group=k)
-            else:        
+            else:
                 parameters = self.assemble_model(group)
                 model = EfficientNetModel()
                 set_weights(model, parameters)
@@ -548,10 +575,10 @@ class ClusterAvg(Strategy):
 
         if cid < self.group_split[0]:
             return "group0"
-    
+
         for i in range(1, len(self.group_split)):
             if self.group_split[i-1] <= cid < self.group_split[i]:
                 return f"group{i}"
-        
+
         raise ValueError(f"Client ID {cid} does not belong to any group in the split {self.group_split}.")
         return "group0"
