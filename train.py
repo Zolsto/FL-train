@@ -162,7 +162,7 @@ def main():
     loss_fn = torch.nn.CrossEntropyLoss()
     #raise Exception("Stopped")
 
-    logdir = "output/FedAvg/my-pre-80"
+    logdir = "output/FedAvg/my-80r-BN40"
     os.makedirs(logdir, exist_ok=True)
     server_writer = SummaryWriter(log_dir=logdir)
 
@@ -199,6 +199,12 @@ def main():
         writer=server_writer,
         loader_dict=test_dict
     )
+
+    fit_config = {
+        "local_epochs": 5,
+        "stop_norm": 40
+    }
+
     if "ClusterAvg" in logdir:
         print("Using ClusterAvg strategy")
         # ClusterAvg strategy
@@ -219,7 +225,7 @@ def main():
                 min_fit_clients=5,
                 # min_evaluate_clients=10,
                 min_available_clients=10,
-                on_fit_config_fn=strategies.get_on_fit_config({"local_epochs": 5}),
+                on_fit_config_fn=strategies.get_on_fit_config(fit_config),
                 # on_evaluate_config_fn=strategies.get_on_evaluate_config({"batch_size": 32}),
                 fit_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn(),
                 # evaluate_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn()
@@ -241,7 +247,7 @@ def main():
                 min_fit_clients=5,
                 #min_evaluate_clients=10,
                 min_available_clients=10,
-                on_fit_config_fn=strategies.get_on_fit_config({"local_epochs": 5}),
+                on_fit_config_fn=strategies.get_on_fit_config(fit_config),
                 #on_evaluate_config_fn=strategies.get_on_evaluate_config({"batch_size": 32}),
                 fit_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn(),
                 #evaluate_metrics_aggregation_fn=strategies.get_fit_metrics_aggregation_fn()

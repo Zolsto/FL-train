@@ -108,6 +108,16 @@ class FlowerClient(NumPyClient):
         # Set the model parameters
         set_weights(self.model, parameters)
 
+        # Freeze BatchNorm layers if specified in config
+        if int(config['server_round']) >= int(config['stop_norm']):
+            for module in self.model.modules():
+                # If layer is BatchNorm
+                if isinstance(module, (nn.BatchNorm1d, nn.BatchNorm2d)):
+                    # Block gradient for this layer
+                    module.eval()
+                    for param in module.parameters():
+                        param.requires_grad = False
+
         # Define the optimizer
         if isinstance(self.optimizer, DictConfig):
             optimizer = instantiate(self.optimizer, lr=config["lr"], params=self.model.parameters())
