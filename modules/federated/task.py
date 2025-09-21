@@ -35,6 +35,7 @@ def train(
     dataloader: torch.utils.data.DataLoader,
     epochs: int=1,
     fine_tune: bool=False,
+    stop_norm: bool=False,
 ) -> Dict[str, Any]:
     """
     Train the network on the training set.
@@ -66,7 +67,7 @@ def train(
     # Train the model
     for epoch in range(epochs):
         # Run an epoch
-        metrics = _run_epoch(model, device, dataloader, epoch, criterion, optimizer)
+        metrics = _run_epoch(model, device, dataloader, epoch, criterion, optimizer, stop_norm=stop_norm)
 
         # Update the metrics
         tot_loss[epoch] = metrics["loss"]
@@ -136,6 +137,7 @@ def _run_epoch(
     criterion: torch.nn.Module,
     optimizer: Optional[torch.optim.Optimizer] = None,
     eval: Optional[bool] = False,  # pylint: disable=redefined-builtin
+    stop_norm: bool = False,
 ) -> Dict[str, Any]:
     """
     Run an epoch of training on the client model.
@@ -162,6 +164,13 @@ def _run_epoch(
     # Set the model to the correct mode
     if eval:
         model.eval()
+    elif stop_norm:
+        model.train()
+        for module in model.modules():
+            if isinstance(module, (torch.nn.BatchNorm1d, torch.nn.BatchNorm2d)):
+                module.eval()
+                for param in module.parameters():
+                    param.requires_grad = False
     else:
         model.train()
 

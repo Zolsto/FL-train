@@ -162,7 +162,7 @@ def main():
     loss_fn = torch.nn.CrossEntropyLoss()
     #raise Exception("Stopped")
 
-    logdir = "output/FedAvg/my-80r-BN40"
+    logdir = "output/ClusterAvg/s1-abs-80r-bn20"
     os.makedirs(logdir, exist_ok=True)
     server_writer = SummaryWriter(log_dir=logdir)
 
@@ -202,7 +202,7 @@ def main():
 
     fit_config = {
         "local_epochs": 5,
-        "stop_norm": 40
+        "stop_norm": 20
     }
 
     if "ClusterAvg" in logdir:
@@ -211,7 +211,7 @@ def main():
         fed_trainer.set_client_and_server(
             strategy=strategies.ClusterAvg(
                 # Parameters of ClusterAvg
-                abstain = False,
+                abstain = True,
                 balance = False,
                 param_split=split_indexes,
                 separate_eval=True,

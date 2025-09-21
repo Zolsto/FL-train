@@ -20,6 +20,7 @@ Author: Matteo Caligiuri
 from typing import Union, Dict
 
 import torch
+import torch.nn as nn
 from flwr.client import NumPyClient
 from flwr.common import Context
 from omegaconf import DictConfig
@@ -108,15 +109,10 @@ class FlowerClient(NumPyClient):
         # Set the model parameters
         set_weights(self.model, parameters)
 
+        stop_norm = False
         # Freeze BatchNorm layers if specified in config
-        if int(config['server_round']) >= int(config['stop_norm']):
-            for module in self.model.modules():
-                # If layer is BatchNorm
-                if isinstance(module, (nn.BatchNorm1d, nn.BatchNorm2d)):
-                    # Block gradient for this layer
-                    module.eval()
-                    for param in module.parameters():
-                        param.requires_grad = False
+        if config['server_round'] > config['stop_norm']:
+            stop_norm = True
 
         # Define the optimizer
         if isinstance(self.optimizer, DictConfig):
@@ -132,6 +128,7 @@ class FlowerClient(NumPyClient):
             optimizer=optimizer,
             dataloader=self.trainloader,
             epochs=config["local_epochs"],
+            stop_norm=stop_norm,
         )
         metrics["partition_id"] = self.partition_id
         return get_weights(self.model), len(self.trainloader), metrics

@@ -9,7 +9,10 @@ from modules.federated.utils import get_weights, set_weights
 class EfficientNetModel(nn.Module):
     def __init__(self, num_classes: int=6, fine_tune_layers: bool=True, weights: list=None, premodel: str=None):
         super().__init__()
-        self.model = models.efficientnet_b0(weights=None, progress=False)
+        if premodel == 'DEFAULT':
+            self.model = models.efficientnet_b0(weights='DEFAULT', progress=False)
+        else:
+            self.model = models.efficientnet_b0(weights=None, progress=False)
 
         if fine_tune_layers == True:
             for block in self.model.features.parameters():
@@ -35,7 +38,7 @@ class EfficientNetModel(nn.Module):
                 state_dict[name] = torch.from_numpy(array)
 
             self.model.load_state_dict(state_dict)
-        elif premodel is not None:
+        elif premodel is not None and premodel is not 'DEFAULT':
             new_dict = OrderedDict()
             pretrained_dict = torch.load(f"../pretrain/modelli/{premodel}/best_{premodel}.pt", weights_only=True)
             # Remove 'model.' (6 char) from weights name in the pretrained state_dict
