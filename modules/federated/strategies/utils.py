@@ -189,11 +189,12 @@ def get_on_fit_config(config: DictConfig) -> Callable[[int], Dict]:
     except TypeError:
         config = {}
 
-    def fit_config_fn(server_round: int) -> Dict:
+    def fit_config_fn(server_round: int, group: int=0) -> Dict:
 
         return {
             **config,
             "server_round": server_round,
+            "group": group,
         }
 
     return fit_config_fn
@@ -216,11 +217,12 @@ def get_on_evaluate_config(config: DictConfig) -> Callable[[int], Dict]:
     except TypeError:
         config = {}
 
-    def evaluate_config_fn(server_round: int) -> Dict:
+    def evaluate_config_fn(server_round: int, group: int=0) -> Dict:
 
         return {
             **config,
             "server_round": server_round,
+            "group": group,
         }
 
     return evaluate_config_fn
@@ -292,10 +294,11 @@ def get_evaluate_fn(
     ) -> Optional[Tuple[float, Dict[str, Scalar]]]:
         # Update the model with the latest parameters
         set_weights(model, parameters)
-
+        group = 0
         if name!="global" and loader_dict is not None and separate_eval:
             # Use the specific dataloader for the group
             test_loader = loader_dict[name]
+            group = int(name[-1])
             if server_round==1:
                 print(f"Separate evaluation for {name} with {len(test_loader.dataset)} samples.")
         else:
@@ -310,12 +313,13 @@ def get_evaluate_fn(
             device=device,
             criterion=criterion,  # config["criterion"],
             dataloader=test_loader,
+            bn_index=group
         )
         if writer is not None:
             #print(f"Logging {name} results: loss({metrics['loss']}) accuracy({metrics['accuracy']})")
             writer.add_scalar(f"{name}/loss", metrics['loss'], server_round)
             writer.add_scalar(f"{name}/accuracy", metrics['accuracy'], server_round)
-            
+
         return metrics["loss"], {"accuracy": metrics["accuracy"]}
 
     return evaluate_fn
@@ -365,7 +369,7 @@ def get_fed_evaluate_fn(
                     #print(f"Logging {name} results: loss({metrics['loss']}) accuracy({metrics['accuracy']})")
                     if server_round==1:
                         print(f"Testing on {k} with {len(v.dataset)} samples.")
-                        
+
                     writer.add_scalar(f"{k}/loss", metrics['loss'], server_round)
                     writer.add_scalar(f"{k}/accuracy", metrics['accuracy'], server_round)
 
@@ -380,7 +384,7 @@ def get_fed_evaluate_fn(
             #print(f"Logging {name} results: loss({metrics['loss']}) accuracy({metrics['accuracy']})")
             writer.add_scalar("global/loss", metrics['loss'], server_round)
             writer.add_scalar("global/accuracy", metrics['accuracy'], server_round)
-            
+
         return metrics["loss"], {"accuracy": metrics["accuracy"]}
-    
+
     return evaluate_fn

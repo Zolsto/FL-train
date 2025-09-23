@@ -30,6 +30,7 @@ class MyFedAvg(Strategy):
             min_evaluate_clients: int = 2,
             min_available_clients: int = 2,
             n_groups: int = 1,
+            inertia: float = 0,
             on_fit_config_fn: Optional[Callable] = None,
             on_evaluate_config_fn: Optional[Callable] = None,
             evaluate_fn: Optional[Callable] = None,
@@ -47,7 +48,8 @@ class MyFedAvg(Strategy):
         self.on_evaluate_config_fn = on_evaluate_config_fn
         self.evaluate_fn = evaluate_fn
         self.best_loss = np.inf
-        self.initial_parameters = initial_parameters
+        self.parameters = initial_parameters
+        self.inertia = inertia
         self.n_groups = n_groups
         self.save_path = save_path
 
@@ -61,17 +63,9 @@ class MyFedAvg(Strategy):
         '''
         Initialize the server parameters.
         '''
-        
-        # If no initial parameters are given, use base model to initialize
-        #if self.initial_parameters is None:
-        #    base_model = EfficientNetModel()
-        #    state_dict = base_model.model.state_dict()
-        #    parameters = [val.cpu().numpy() for val in state_dict.values()]
-        #    self.initial_parameters = ndarrays_to_parameters(parameters)
-        initial_param = self.initial_parameters
-        self.initial_parameters = None
-        return initial_param
-        
+
+        return self.parameters
+
     def configure_fit(
         self,
         server_round: int,
@@ -84,7 +78,8 @@ class MyFedAvg(Strategy):
         '''
         Select clients and prepare fit (training) instructions.
         '''
-
+        if server_round<=1 and self.parameters is None:
+            self.parameters = parameters
         # Select clients to fit
         num_available = client_manager.num_available()
         sample_size = int(num_available * self.fraction_fit)
@@ -112,14 +107,14 @@ class MyFedAvg(Strategy):
     ) -> Tuple[Optional[Parameters], Dict[str, Scalar]]:
         if not results:
             return None, {}
-        
+
         examples = []
         weights = []
 
         for _, fitres in results:
             examples.append(fitres.num_examples)
             weights.append(parameters_to_ndarrays(fitres.parameters))
-        
+
         total_examples = np.sum(examples)
         base_param = parameters_to_ndarrays(results[0][1].parameters)
         avg = [ np.zeros_like(layer, dtype=np.float32) for layer in base_param ]
@@ -127,11 +122,17 @@ class MyFedAvg(Strategy):
             w = examples[client] / total_examples
             for i in range(len(weights[client])):
                 avg[i] += weights[client][i] * w
-        
+
+        if self.inertia > 0 and self.inertia < 1 and server_round > 1 and self.parameters is not None:
+            old_weights = parameters_to_ndarrays(self.parameters)
+            for i in range(len(avg)):
+                avg[i] = self.inertia * old_weights[i] + (1 - self.inertia) * avg[i]
+
         if self.fraction_evaluate == 0:
             self.save_model(server_round=server_round, parameters=avg)
 
-        return ndarrays_to_parameters(avg), {}
+        self.parameters = ndarrays_to_parameters(avg)
+        return self.parameters, {}
 
     def configure_evaluate(
         self,
@@ -155,7 +156,7 @@ class MyFedAvg(Strategy):
             evaluate_ins = EvaluateIns(parameters, config)
             # INFO EvaluateIns is a tuple of (parameters, config), returned with its client (for each client)
             tuples.append((client, evaluate_ins))
-            
+
         return tuples
 
     def aggregate_evaluate(
@@ -172,7 +173,7 @@ class MyFedAvg(Strategy):
 
         if not results:
             return None, {}
-        
+
         all_metrics = { "loss": [], "num_examples": [] }
         for _, evres in results:
             all_metrics['loss'].append(evres.loss)
@@ -182,7 +183,7 @@ class MyFedAvg(Strategy):
                     all_metrics[metric_name] = []
 
                 all_metrics[metric_name].append(metric_value)
-        
+
         aggregated_metrics = {}
         for metric_name, metric_values in all_metrics.items():
             if metric_name=="num_examples":
@@ -200,6 +201,8 @@ class MyFedAvg(Strategy):
         '''
         Evaluate the model on the server.
         '''
+        if server_round<=1 and self.parameters is None:
+            self.parameters = parameters
 
         # Optional server evaluation
         if self.evaluate_fn is not None:
@@ -209,7 +212,7 @@ class MyFedAvg(Strategy):
             if loss < self.best_loss:
                 self.best_loss = loss
                 self.save_model(server_round=server_round, parameters=parameters)
-            
+
             if self.n_groups > 1:
                 for g in range(self.n_groups):
                     group = f"group{g}"

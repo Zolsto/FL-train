@@ -129,6 +129,7 @@ class FlowerClient(NumPyClient):
             dataloader=self.trainloader,
             epochs=config["local_epochs"],
             stop_norm=stop_norm,
+            bn_index=config['group'],
         )
         metrics["partition_id"] = self.partition_id
         return get_weights(self.model), len(self.trainloader), metrics
@@ -146,6 +147,7 @@ class FlowerClient(NumPyClient):
             device=self.device,
             criterion=self.criterion,
             dataloader=self.valloader,
+            bn_index=config['group'],
         )
         metrics["partition_id"] = self.partition_id
         if self.save_path is not None:

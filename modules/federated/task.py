@@ -36,6 +36,7 @@ def train(
     epochs: int=1,
     fine_tune: bool=False,
     stop_norm: bool=False,
+    bn_index: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Train the network on the training set.
@@ -67,7 +68,7 @@ def train(
     # Train the model
     for epoch in range(epochs):
         # Run an epoch
-        metrics = _run_epoch(model, device, dataloader, epoch, criterion, optimizer, stop_norm=stop_norm)
+        metrics = _run_epoch(model, device, dataloader, epoch, criterion, optimizer, stop_norm=stop_norm, bn_index=bn_index)
 
         # Update the metrics
         tot_loss[epoch] = metrics["loss"]
@@ -96,6 +97,7 @@ def test(
     device: Union[torch.device, str],
     criterion: torch.nn.Module,
     dataloader: torch.utils.data.DataLoader,
+    bn_index: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Evaluate the network on the entire test set.
@@ -114,7 +116,7 @@ def test(
     if isinstance(device, str):
         device = torch.device(device)
     # Evaluate the model
-    metrics = _run_epoch(model, device, dataloader, 0, criterion, eval=True)
+    metrics = _run_epoch(model, device, dataloader, 0, criterion, eval=True, bn_index=bn_index)
 
     # Extract the total loss and accuracy
     loss = metrics["loss"]
@@ -138,6 +140,7 @@ def _run_epoch(
     optimizer: Optional[torch.optim.Optimizer] = None,
     eval: Optional[bool] = False,  # pylint: disable=redefined-builtin
     stop_norm: bool = False,
+    bn_index: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Run an epoch of training on the client model.
@@ -160,6 +163,10 @@ def _run_epoch(
 
     # Check if the input data are correct
     _in_checker(optimizer, eval)
+
+    # Set the BatchNorm index if applicable
+    if bn_index is not None:
+        model.model.update_index(bn_index)
 
     # Set the model to the correct mode
     if eval:

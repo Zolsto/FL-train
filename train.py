@@ -143,13 +143,13 @@ def main():
     print("CUDA device count:", torch.cuda.device_count())
     print("CUDA current device:", torch.cuda.current_device())
     print("CUDA device name:", torch.cuda.get_device_name(0))
-    model = EfficientNetModel(num_classes=6, fine_tune_layers=True, premodel="presint")
+    model = EfficientNetModel(num_classes=6, bn_group=True, premodel="presint")
     # Load pre-trained weights
     pre_trained_weights = [layer.cpu().numpy() for layer in model.state_dict().values()]
     print(list(model.state_dict().keys()))
     start_parameters = ndarrays_to_parameters(pre_trained_weights)
 
-    model = EfficientNetModel(num_classes=6, fine_tune_layers=True)
+    model = EfficientNetModel(num_classes=6, bn_group=True)
     split_indexes = []
     for name in model.state_dict().keys():
         if "features.0" in name or "features.1" in name:
@@ -162,7 +162,7 @@ def main():
     loss_fn = torch.nn.CrossEntropyLoss()
     #raise Exception("Stopped")
 
-    logdir = "output/ClusterAvg/s1-abs-80r-bn20"
+    logdir = "output/ClusterAvg/s1-roundBal-80r"
     os.makedirs(logdir, exist_ok=True)
     server_writer = SummaryWriter(log_dir=logdir)
 
@@ -202,7 +202,7 @@ def main():
 
     fit_config = {
         "local_epochs": 5,
-        "stop_norm": 20
+        "stop_norm": np.inf
     }
 
     if "ClusterAvg" in logdir:
@@ -211,8 +211,11 @@ def main():
         fed_trainer.set_client_and_server(
             strategy=strategies.ClusterAvg(
                 # Parameters of ClusterAvg
-                abstain = True,
-                balance = False,
+                abstain = False,
+                bn_group = False,
+                balance = True,
+                data_balance = False,
+                inertia = 0,
                 param_split=split_indexes,
                 separate_eval=True,
                 weighted_loss=True,
@@ -242,6 +245,7 @@ def main():
             strategy=strategies.MyFedAvg(
                 save_path=logdir,
                 n_groups=len(test_dict),
+                inertia=0.5,
                 fraction_fit=0.00001,
                 fraction_evaluate=1,
                 min_fit_clients=5,
